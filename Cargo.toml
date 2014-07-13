@@ -8,3 +8,4 @@ authors = [ "nrc@ncameron.org" ]
 
 name = "hoare"
 crate_type = ["dylib"]
+path = "libhoare/lib.rs"
