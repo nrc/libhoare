@@ -1,0 +1,10 @@
+[package]
+
+name = "hoare"
+version = "0.1.0"
+authors = [ "nrc@ncameron.org" ]
+
+[[lib]]
+
+name = "hoare"
+crate_type = ["dylib"]
