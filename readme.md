@@ -93,10 +93,11 @@ a single file, `lib.rs`.
 The `test` directory contains unit tests for the library.
 
 The `eg` directory contains a few examples of how to use the library:
-    * hello.rs is a very simple (hello world!) example of how to use an invariant
+
+ * hello.rs is a very simple (hello world!) example of how to use an invariant
 (useful as a basic test case);
-    * doc.rs contains the examples above, so we can check they compiler and run;
-    * lexer.rs is a more realistic example of use - a simple (and certainly not
+ * doc.rs contains the examples above, so we can check they compiler and run;
+ * lexer.rs is a more realistic example of use - a simple (and certainly not
 industrial-strength) lexer for a very small language.
 
 
