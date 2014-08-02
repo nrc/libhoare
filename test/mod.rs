@@ -117,17 +117,17 @@ mod test {
     #[should_fail]
     fn test_arg_fail_6() { foo_ta6("bar") }
 
-    #[postcond="result"]
+    #[postcond="return"]
     fn trt() -> bool { true }
     #[test]
     fn test_result_trivial() { trt(); }
-    #[postcond="result"]
+    #[postcond="return"]
     fn trtf() -> bool { false }
     #[test]
     #[should_fail]
     fn test_result_trivial_fail() { trtf(); }
 
-    #[postcond="result > 0"]
+    #[postcond="return > 0"]
     fn tr1(x: int) -> int { x }
     #[test]
     fn test_result_1() { tr1(5); }
@@ -135,7 +135,7 @@ mod test {
     #[should_fail]
     fn test_result_1_fail() { tr1(-5); }
 
-    #[postcond="result == 'a'"]
+    #[postcond="return == 'a'"]
     fn tr2(x: char) -> char { x }
     #[test]
     fn test_result_2() { tr2('a'); }
@@ -143,7 +143,7 @@ mod test {
     #[should_fail]
     fn test_result_2_fail() { tr2('b'); }
 
-    #[postcond="result > 5"]
+    #[postcond="return > 5"]
     fn tr3(path: bool) -> int {
         if path {
             return 42;
@@ -156,7 +156,7 @@ mod test {
         tr3(false);
     }
 
-    #[postcond="result < 15"]
+    #[postcond="return < 15"]
     fn tr3f(path: bool) -> int {
         if path {
             return 42;

@@ -100,7 +100,9 @@ fn postcond(cx: &mut ExtCtxt,
                 None => return item
             };
             let pred_str = pred.get();
-            let pred = cx.parse_expr(pred_str.to_string());
+            // Rename `return` to `__result`
+            let pred_str = pred_str.replace("return", "__result");
+            let pred = cx.parse_expr(pred_str.clone());
 
             // Construct the wrapper function.
             let fn_name = token::get_ident(item.ident);
@@ -119,7 +121,7 @@ fn postcond(cx: &mut ExtCtxt,
             let ty_args = ty_args(generics, sp);
             stmts.push(assign_expr(&*cx, fn_ident, args, ty_args));
 
-            stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, pred_str));
+            stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, pred_str.as_slice()));
 
             let body = fn_body(cx, stmts, sp);
             box(GC) Item { node: ast::ItemFn(decl, style, abi, generics.clone(), body),
@@ -278,7 +280,7 @@ fn is_sane_pattern(pat: &ast::Pat) -> bool {
 
 fn args(cx: &ExtCtxt, decl: &ast::FnDecl, sp: Span) -> Option<Vec<ast::TokenTree>> {
     for a in decl.inputs.iter() {
-        if !is_sane_pattern(a.pat) {
+        if !is_sane_pattern(&*a.pat) {
             return None
         }
     }
@@ -358,13 +360,13 @@ fn assign_expr(cx: &ExtCtxt,
                arg_toks: Vec<ast::TokenTree>,
                ty_arg_toks: Vec<ast::TokenTree>) -> Gc<ast::Stmt> {
     if ty_arg_toks.len() > 0 {
-        quote_stmt!(cx, let result = $fn_name::<$ty_arg_toks>($arg_toks);)
+        quote_stmt!(cx, let __result = $fn_name::<$ty_arg_toks>($arg_toks);)
     } else {
-        quote_stmt!(cx, let result = $fn_name($arg_toks);)
+        quote_stmt!(cx, let __result = $fn_name($arg_toks);)
     }
 }
 
-// The return expr for our wrapper function, just returns result.
+// The return expr for our wrapper function, just returns __result.
 fn result_expr(cx: &ExtCtxt) -> Gc<ast::Expr> {
-    quote_expr!(cx, result)
+    quote_expr!(cx, __result)
 }
