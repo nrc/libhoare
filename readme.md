@@ -1,4 +1,4 @@
-# LibHoare
+ LibHoare
 
 Simple Rust support for design by contract-style assertions. Supports
 * preconditions (`precond`),
