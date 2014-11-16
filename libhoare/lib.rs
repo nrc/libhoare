@@ -21,39 +21,39 @@ extern crate syntax;
 use syntax::ast;
 use syntax::ast::{Item, MetaItem};
 use syntax::codemap::{Span,Spanned};
-use syntax::ext::base::{ExtCtxt, ItemModifier};
+use syntax::ext::base::{ExtCtxt, Modifier};
 use syntax::ext::quote::rt::ExtParseUtils;
 use syntax::parse::token;
+use syntax::ptr::P;
 use rustc::plugin::Registry;
-use std::gc::{Gc, GC};
 
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_syntax_extension(token::intern("precond"),
-                                  ItemModifier(precond));
+                                  Modifier(box precond));
     reg.register_syntax_extension(token::intern("postcond"),
-                                  ItemModifier(postcond));
+                                  Modifier(box postcond));
     reg.register_syntax_extension(token::intern("invariant"),
-                                  ItemModifier(invariant));
+                                  Modifier(box invariant));
     reg.register_syntax_extension(token::intern("debug_precond"),
-                                  ItemModifier(debug_precond));
+                                  Modifier(box debug_precond));
     reg.register_syntax_extension(token::intern("debug_postcond"),
-                                  ItemModifier(debug_postcond));
+                                  Modifier(box debug_postcond));
     reg.register_syntax_extension(token::intern("debug_invariant"),
-                                  ItemModifier(debug_invariant));
+                                  Modifier(box debug_invariant));
 }
 
 fn precond(cx: &mut ExtCtxt,
            sp: Span,
-           attr: Gc<MetaItem>,
-           item: Gc<Item>) -> Gc<Item> {
+           attr: &MetaItem,
+           item: P<Item>) -> P<Item> {
     match &item.node {
-        &ast::ItemFn(decl, style, abi, ref generics, _) => {
+        &ast::ItemFn(ref decl, style, abi, ref generics, _) => {
             // Parse out the predicate supplied to the syntax extension.
             let pred = match make_predicate(cx, sp, attr, "precond") {
                 Some(pred) => pred,
-                None => return item
+                None => return item.clone()
             };
             let pred_str = pred.get();
             let pred = cx.parse_expr(pred_str.to_string());
@@ -62,42 +62,42 @@ fn precond(cx: &mut ExtCtxt,
             let fn_name = token::get_ident(item.ident);
 
             let mut stmts = Vec::new();
-            stmts.push(assert(&*cx, "precondition of", &fn_name, pred, pred_str));
+            stmts.push(assert(&*cx, "precondition of", &fn_name, pred.clone(), pred_str));
 
             let fn_name = ast::Ident::new(token::intern(format!("__inner_fn_{}", fn_name).as_slice()));
             // Construct the inner function.
-            let inner_item = box(GC) Item { attrs: Vec::new(), .. (*item).clone() };
+            let inner_item = P(Item { attrs: Vec::new(), .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_name, inner_item));
 
             // Construct the function call.
-            let args = match args(cx, &*decl, sp) {
+            let args = match args(cx, &**decl, sp) {
                 Some(args) => args,
-                None => { return item; }
+                None => { return item.clone(); }
             };
             let ty_args = ty_args(generics, sp);
             stmts.push(assign_expr(&*cx, fn_name, args, ty_args));
 
             let body = fn_body(cx, stmts, sp);
-            box(GC) Item { node: ast::ItemFn(decl, style, abi, generics.clone(), body),
-                           .. (*item).clone() }
+            P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
+                     .. (*item).clone() })
         }
         _ => {
             cx.span_err(sp, "Precondition on non-function item");
-            item
+            item.clone()
         }
     }
 }
 
 fn postcond(cx: &mut ExtCtxt,
             sp: Span,
-            attr: Gc<MetaItem>,
-            item: Gc<Item>) -> Gc<Item> {
+            attr: &MetaItem,
+            item: P<Item>) -> P<Item> {
     match &item.node {
-        &ast::ItemFn(decl, style, abi, ref generics, _) => {
+        &ast::ItemFn(ref decl, style, abi, ref generics, _) => {
             // Parse out the predicate supplied to the syntax extension.
             let pred = match make_predicate(cx, sp, attr, "postcond") {
                 Some(pred) => pred,
-                None => return item
+                None => return item.clone()
             };
             let pred_str = pred.get();
             // Rename `return` to `__result`
@@ -110,13 +110,13 @@ fn postcond(cx: &mut ExtCtxt,
             let mut stmts = Vec::new();
             let fn_ident = ast::Ident::new(token::intern(format!("__inner_{}", fn_name).as_slice()));
             // Construct the inner function.
-            let inner_item = box(GC) Item { attrs: Vec::new(), .. (*item).clone() };
+            let inner_item = P(Item { attrs: Vec::new(), .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_ident, inner_item));
 
             // Construct the function call.
-            let args = match args(cx, &*decl, sp) {
+            let args = match args(cx, &**decl, sp) {
                 Some(args) => args,
-                None => { return item; }
+                None => { return item.clone(); }
             };
             let ty_args = ty_args(generics, sp);
             stmts.push(assign_expr(&*cx, fn_ident, args, ty_args));
@@ -124,26 +124,26 @@ fn postcond(cx: &mut ExtCtxt,
             stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, pred_str.as_slice()));
 
             let body = fn_body(cx, stmts, sp);
-            box(GC) Item { node: ast::ItemFn(decl, style, abi, generics.clone(), body),
-                           .. (*item).clone() }
+            P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
+                     .. (*item).clone() })
         }
         _ => {
             cx.span_err(sp, "Postcondition on non-function item");
-            item
+            item.clone()
         }
     }
 }
 
 fn invariant(cx: &mut ExtCtxt,
              sp: Span,
-             attr: Gc<MetaItem>,
-             item: Gc<Item>) -> Gc<Item> {
+             attr: &MetaItem,
+             item: P<Item>) -> P<Item> {
     match &item.node {
-        &ast::ItemFn(decl, style, abi, ref generics, _) => {
+        &ast::ItemFn(ref decl, style, abi, ref generics, _) => {
             // Parse out the predicate supplied to the syntax extension.
             let pred = match make_predicate(cx, sp, attr, "invariant") {
                 Some(pred) => pred,
-                None => return item
+                None => return item.clone()
             };
             let pred_str = pred.get();
             let pred = cx.parse_expr(pred_str.to_string());
@@ -152,17 +152,17 @@ fn invariant(cx: &mut ExtCtxt,
             let fn_name = token::get_ident(item.ident);
 
             let mut stmts = Vec::new();
-            stmts.push(assert(&*cx, "invariant entering", &fn_name, pred, pred_str));
+            stmts.push(assert(&*cx, "invariant entering", &fn_name, pred.clone(), pred_str));
 
             let fn_ident = ast::Ident::new(token::intern(format!("__inner_{}", fn_name).as_slice()));
             // Construct the inner function.
-            let inner_item = box(GC) Item { attrs: Vec::new(), .. (*item).clone() };
+            let inner_item = P(Item { attrs: Vec::new(), .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_ident, inner_item));
 
             // Construct the function call.
-            let args = match args(cx, &*decl, sp) {
+            let args = match args(cx, &**decl, sp) {
                 Some(args) => args,
-                None => { return item; }
+                None => { return item.clone(); }
             };
             let ty_args = ty_args(generics, sp);
             stmts.push(assign_expr(&*cx, fn_ident, args, ty_args));
@@ -170,37 +170,37 @@ fn invariant(cx: &mut ExtCtxt,
             stmts.push(assert(&*cx, "invariant leaving", &fn_name, pred, pred_str));
 
             let body = fn_body(cx, stmts, sp);
-            box(GC) Item { node: ast::ItemFn(decl, style, abi, generics.clone(), body),
-                           .. (*item).clone() }
+            P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
+                     .. (*item).clone() })
         }
         _ => {
             cx.span_err(sp, "Invariant on non-function item");
-            item
+            item.clone()
         }
     }
 }
 
 fn debug_precond(cx: &mut ExtCtxt,
                  sp: Span,
-                 attr: Gc<MetaItem>,
-                 item: Gc<Item>) -> Gc<Item> {
-    if_debug(cx, |cx| precond(cx, sp, attr, item), item)
+                 attr: &MetaItem,
+                 item: P<Item>) -> P<Item> {
+    if_debug(cx, |cx| precond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_postcond(cx: &mut ExtCtxt,
                   sp: Span,
-                  attr: Gc<MetaItem>,
-                  item: Gc<Item>) -> Gc<Item> {
-    if_debug(cx, |cx| postcond(cx, sp, attr, item), item)
+                  attr: &MetaItem,
+                  item: P<Item>) -> P<Item> {
+    if_debug(cx, |cx| postcond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_invariant(cx: &mut ExtCtxt,
                    sp: Span,
-                   attr: Gc<MetaItem>,
-                   item: Gc<Item>) -> Gc<Item> {
-    if_debug(cx, |cx| invariant(cx, sp, attr, item), item)
+                   attr: &MetaItem,
+                   item: P<Item>) -> P<Item> {
+    if_debug(cx, |cx| invariant(cx, sp, attr, item.clone()), item.clone())
 }
 
 // Executes f if we are compiling in debug mode, returns item otherwise.
-fn if_debug(cx: &mut ExtCtxt, f: |&mut ExtCtxt| -> Gc<Item>, item: Gc<Item>) -> Gc<Item> {
+fn if_debug(cx: &mut ExtCtxt, f: |&mut ExtCtxt| -> P<Item>, item: P<Item>) -> P<Item> {
     if !cx.cfg().iter().any(
         |item| item.node == ast::MetaWord(token::get_name(token::intern("ndebug")))) {
         f(cx)
@@ -213,11 +213,12 @@ fn if_debug(cx: &mut ExtCtxt, f: |&mut ExtCtxt| -> Gc<Item>, item: Gc<Item>) -> 
 // into a string.
 fn make_predicate(cx: &ExtCtxt,
                   sp: Span,
-                  attr: Gc<MetaItem>,
+                  attr: &MetaItem,
                   cond_name: &str) -> Option<token::InternedString> {
     fn debug_name(cond_name: &str) -> String {
-        let result = "debug_".to_string();
-        result.append(cond_name)
+        let mut result = "debug_".to_string();
+        result.push_str(cond_name);
+        result
     }
 
     match &attr.node {
@@ -251,8 +252,8 @@ fn make_predicate(cx: &ExtCtxt,
 fn assert(cx: &ExtCtxt,
           cond_type: &str,
           fn_name: &token::InternedString,
-          pred: Gc<ast::Expr>,
-          pred_str: &str) -> Gc<ast::Stmt> {
+          pred: P<ast::Expr>,
+          pred_str: &str) -> P<ast::Stmt> {
     let label = format!("\"{} {} ({})\"", cond_type, fn_name, pred_str);
     let label = cx.parse_expr(label);
     quote_stmt!(&*cx, assert!($pred, $label);)
@@ -268,13 +269,13 @@ fn assert(cx: &ExtCtxt,
 // we just check if we can skip the translation phase and fail otherwise (FIXME).
 fn is_sane_pattern(pat: &ast::Pat) -> bool {
     match &pat.node {
-        &ast::PatWild | &ast::PatWildMulti | &ast::PatMac(_) | &ast::PatStruct(..) |
+        &ast::PatWild(_) | &ast::PatMac(_) | &ast::PatStruct(..) |
         &ast::PatLit(_) | &ast::PatRange(..) | &ast::PatVec(..) => false,
         &ast::PatIdent(ast::BindByValue(ast::MutImmutable), _, _) => true,
         &ast::PatIdent(..) => false,
         &ast::PatEnum(_, Some(ref ps)) | &ast::PatTup(ref ps) => ps.iter().all(|p| is_sane_pattern(&**p)),
         &ast::PatEnum(..) => false,
-        &ast::PatBox(p) | &ast::PatRegion(p) => is_sane_pattern(&*p)
+        &ast::PatBox(ref p) | &ast::PatRegion(ref p) => is_sane_pattern(&**p)
     }
 }
 
@@ -298,9 +299,9 @@ fn args(cx: &ExtCtxt, decl: &ast::FnDecl, sp: Span) -> Option<Vec<ast::TokenTree
         if first {
             first = false;
         } else {
-            arg_toks.push(ast::TTTok(sp, token::COMMA));
+            arg_toks.push(ast::TtToken(sp, token::Comma));
         }
-        arg_toks.push_all_move(a);
+        arg_toks.extend(a.into_iter());
     }
     Some(arg_toks)
 }
@@ -313,52 +314,52 @@ fn ty_args(generics: &ast::Generics, sp: Span) -> Vec<ast::TokenTree> {
         if first {
             first = false;
         } else {
-            ty_arg_toks.push(token::COMMA);
+            ty_arg_toks.push(token::Comma);
         }
-        ty_arg_toks.push(token::IDENT(*a, false));
+        ty_arg_toks.push(token::Ident(*a, token::Plain));
     }
-    ty_arg_toks.iter().map(|t| ast::TTTok(sp, t.clone())).collect()
+    ty_arg_toks.iter().map(|t| ast::TtToken(sp, t.clone())).collect()
 }
 
 // Creates the inner function, which is the original item (which must be an
 // ast::ItemFn) with the new name fn_name.
 fn fn_decl(sp: Span,
            fn_name: ast::Ident,
-           item: Gc<Item>) -> Gc<ast::Stmt> {
+           item: P<Item>) -> P<ast::Stmt> {
     match &item.node {
-        &ast::ItemFn(decl, style, abi, ref generics, body) => {
+        &ast::ItemFn(ref decl, style, abi, ref generics, ref body) => {
             let inner = Item {
                 ident: fn_name,
-                node: ast::ItemFn(decl, style, abi, generics.clone(), body),
+                node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body.clone()),
                 .. (*item).clone() };
 
-            let inner = ast::DeclItem(box(GC) inner);
-            let inner = box(GC) Spanned{ node: inner, span: sp };
+            let inner = ast::DeclItem(P(inner));
+            let inner = P(Spanned{ node: inner, span: sp });
 
             let stmt = ast::StmtDecl(inner, ast::DUMMY_NODE_ID);
-            box(GC) Spanned{ node: stmt, span: sp }
+            P(Spanned{ node: stmt, span: sp })
         }
-        _ => fail!("This should be checked by the caller")
+        _ => panic!("This should be checked by the caller")
     }
 }
 
 fn fn_body(cx: &ExtCtxt,
-           stmts: Vec<Gc<ast::Stmt>>,
-           sp: Span) -> Gc<ast::Block> {
-    box(GC) ast::Block {
+           stmts: Vec<P<ast::Stmt>>,
+           sp: Span) -> P<ast::Block> {
+    P(ast::Block {
         view_items: vec!(),
         stmts: stmts,
         expr: Some(result_expr(&*cx)),
         id: ast::DUMMY_NODE_ID,
         rules: ast::DefaultBlock,
         span: sp
-    }
+    })
 }
 
 fn assign_expr(cx: &ExtCtxt,
                fn_name: ast::Ident,
                arg_toks: Vec<ast::TokenTree>,
-               ty_arg_toks: Vec<ast::TokenTree>) -> Gc<ast::Stmt> {
+               ty_arg_toks: Vec<ast::TokenTree>) -> P<ast::Stmt> {
     if ty_arg_toks.len() > 0 {
         quote_stmt!(cx, let __result = $fn_name::<$ty_arg_toks>($arg_toks);)
     } else {
@@ -367,6 +368,6 @@ fn assign_expr(cx: &ExtCtxt,
 }
 
 // The return expr for our wrapper function, just returns __result.
-fn result_expr(cx: &ExtCtxt) -> Gc<ast::Expr> {
+fn result_expr(cx: &ExtCtxt) -> P<ast::Expr> {
     quote_expr!(cx, __result)
 }

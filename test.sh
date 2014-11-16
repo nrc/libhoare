@@ -11,3 +11,8 @@ echo unit tests
 echo
 $RUSTC test/mod.rs --test -L ../obj -o ../obj/test
 ../obj/test
+echo
+echo rpass tests
+echo
+$RUSTC test/rpass-1.rs -L ../obj -o ../obj/rpass-1
+../obj/rpass-1
