@@ -14,6 +14,9 @@
 extern crate hoare;
 
 #[cfg(test)]
+pub use test::pub_test_trivial_4;
+
+#[cfg(test)]
 mod test {
     #[test]
     #[precond="true"]
@@ -41,6 +44,33 @@ mod test {
     #[should_fail]
     #[invariant="false"]
     fn test_fail_trivial_3() {}
+
+    #[test]
+    #[precond="true"]
+    pub fn pub_test_trivial_1() {}
+    #[test]
+    #[postcond="true"]
+    pub fn pub_test_trivial_2() {}
+    #[test]
+    #[invariant="true"]
+    pub fn pub_test_trivial_3() {}
+    #[test]
+    #[precond="true"]
+    #[postcond="true"]
+    #[invariant="true"]
+    pub fn pub_test_trivial_4() {}
+    #[test]
+    #[should_fail]
+    #[precond="false"]
+    pub fn pub_test_fail_trivial_1() {}
+    #[test]
+    #[should_fail]
+    #[postcond="false"]
+    pub fn pub_test_fail_trivial_2() {}
+    #[test]
+    #[should_fail]
+    #[invariant="false"]
+    pub fn pub_test_fail_trivial_3() {}
 
     #[test]
     #[precond="4u32 < 5"]
