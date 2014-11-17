@@ -66,7 +66,7 @@ fn precond(cx: &mut ExtCtxt,
 
             let fn_name = ast::Ident::new(token::intern(format!("__inner_fn_{}", fn_name).as_slice()));
             // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), .. (*item).clone() });
+            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_name, inner_item));
 
             // Construct the function call.
@@ -110,7 +110,7 @@ fn postcond(cx: &mut ExtCtxt,
             let mut stmts = Vec::new();
             let fn_ident = ast::Ident::new(token::intern(format!("__inner_{}", fn_name).as_slice()));
             // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), .. (*item).clone() });
+            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_ident, inner_item));
 
             // Construct the function call.
@@ -156,7 +156,7 @@ fn invariant(cx: &mut ExtCtxt,
 
             let fn_ident = ast::Ident::new(token::intern(format!("__inner_{}", fn_name).as_slice()));
             // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), .. (*item).clone() });
+            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_ident, inner_item));
 
             // Construct the function call.
