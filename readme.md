@@ -19,15 +19,14 @@ which was named after Tony).
 
 ## Using libhoare
 
-Theoretically you can use libhoare with Cargo by adding 
+You can use libhoare with Cargo by adding 
 
 ```
 [dependencies.hoare]
 git = "https://github.com/nick29581/libhoare.git"
 ```
 
-to your projects Cargo manifest. I haven't actually managed to get Cargo to work,
-so I haven't tested this.
+to your projects Cargo manifest.
 
 Otherwise, download this repo, build it (see build instructions below), make
 sure the path to the compiled libhoare is on your library path in some way (one
@@ -106,6 +105,12 @@ industrial-strength) lexer for a very small language.
 To build libhoare from the top level of your checked out repo run
 
 ```
+cargo build
+```
+
+(if using cargo) or
+
+```
 $RUSTC ./libhoare/lib.rs
 ```
 
@@ -125,7 +130,8 @@ to build libhoare. Examples are created in `../obj`
 
 ## TODO
 
-* cargo support (maybe it works? I didn't have much success finding out)
+* cargo support (building works, would be nice to have tests support)
+* add tests to RustCI
 * tests for debug_ versions of macros - what is the best way to test this?
 * better use of macro stuff? (I'm a total beginner at syntax extensions, this all
 could probably be implemented better).

@@ -7,7 +7,7 @@ description = "Design by contract style assertions for Rust"
 repository = "https://github.com/nick29581/libhoare"
 readme = "readme.md"
 
-[[lib]]
+[lib]
 
 name = "hoare"
 crate_type = ["dylib"]
