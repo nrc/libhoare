@@ -24,7 +24,6 @@ use syntax::parse::token;
 use syntax::ptr::P;
 use rustc::plugin::Registry;
 
-
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_syntax_extension(token::intern("precond"),
@@ -278,45 +277,30 @@ fn is_sane_pattern(pat: &ast::Pat) -> bool {
 }
 
 fn args(cx: &ExtCtxt, decl: &ast::FnDecl, sp: Span) -> Option<Vec<ast::TokenTree>> {
-    for a in decl.inputs.iter() {
-        if !is_sane_pattern(&*a.pat) {
-            return None
-        }
+    if !decl.inputs.iter().map(|a| &*a.pat).all(is_sane_pattern) {
+        return None;
     }
 
     let cm = &cx.parse_sess.span_diagnostic.cm;
-    let args = decl.inputs.iter().map(|a| {
+    Some(decl.inputs
+        .iter()
         // span_to_snippet really shouldn't return None, so I hope the
         // unwrap is OK. Not sure we can do anything it is does in any case.
-        cx.parse_tts(cm.span_to_snippet(a.pat.span).unwrap())
-    });
-    
-    let mut arg_toks = Vec::new();
-    let mut first = true;
-    for a in args {
-        if first {
-            first = false;
-        } else {
-            arg_toks.push(ast::TtToken(sp, token::Comma));
-        }
-        arg_toks.extend(a.into_iter());
-    }
-    Some(arg_toks)
+        .map(|a| cx.parse_tts(cm.span_to_snippet(a.pat.span).unwrap()))
+        .collect::<Vec<_>>()
+        .connect(&ast::TtToken(sp, token::Comma)))
 }
 
 fn ty_args(generics: &ast::Generics, sp: Span) -> Vec<ast::TokenTree> {
-    let ty_args = generics.ty_params.map(|tp| tp.ident);
-    let mut ty_arg_toks = Vec::new();
-    let mut first = true;
-    for a in ty_args.iter() {
-        if first {
-            first = false;
-        } else {
-            ty_arg_toks.push(token::Comma);
-        }
-        ty_arg_toks.push(token::Ident(*a, token::Plain));
-    }
-    ty_arg_toks.iter().map(|t| ast::TtToken(sp, t.clone())).collect()
+    generics.ty_params
+        .iter()
+        .map(|tp| tp.ident)
+        .map(|ident| Some(token::Ident(ident, token::Plain)))
+        .collect::<Vec<_>>()
+        .connect(&token::Comma)
+        .into_iter()
+        .map(|t| ast::TtToken(sp, t))
+        .collect()
 }
 
 // Creates the inner function, which is the original item (which must be an
