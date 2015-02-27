@@ -1,5 +1,4 @@
 [package]
-
 name = "hoare"
 version = "0.1.1"
 authors = [ "nrc@ncameron.org" ]
@@ -8,8 +7,6 @@ repository = "https://github.com/nick29581/libhoare"
 readme = "readme.md"
 
 [lib]
-
 name = "hoare"
-crate_type = ["dylib"]
 path = "libhoare/lib.rs"
 plugin = true

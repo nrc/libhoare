@@ -8,16 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// These tests should all fail to compile, but should not ICE or give
-// unreasonable error messages.
+#![feature(plugin)]
 
-#![feature(phase)]
+#![plugin(hoare)]
 
-#[phase(plugin)]
-extern crate hoare;
+#[precond="x != 0"]
+fn foo(x: i64) {
+    println!("hello world! {}", x);
+}
 
-#[precond=""]
-fn test_bad_pred() {}
+#[debug_invariant="*x > 60"]
+fn bar<X: std::fmt::Display>(x: &mut i64, y: X) -> i64 {
+    println!("hello world! {} {}", x, y);
+    *x += 20;
+    35
+}
 
-fn main() {}
+fn main() {
+    // A very simple example.
+    foo(1);
 
+    // A slightly more interesting test case.
+    let mut x = 65;
+    bar::<i64>(&mut x, 10);
+}

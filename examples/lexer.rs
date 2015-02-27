@@ -23,22 +23,21 @@
 // inside the quotes and the quotes themselves are a single token (including
 // symbols and whitespace).
 
-#![feature(phase)]
+#![feature(plugin)]
 
-#[phase(plugin)]
-extern crate hoare;
+#![plugin(hoare)]
 
-use std::collections::hashmap::HashSet;
+use std::collections::HashSet;
 
 // Symbols with special meaning
-static COMMA: &'static str = ",";
-static OR: &'static str = "|";
-static COLON: &'static str = ":";
-static ARROW: &'static str = "::=";
-static TICK: &'static str = "`";
+const COMMA: &'static str = ",";
+const OR: &'static str = "|";
+const COLON: &'static str = ":";
+const ARROW: &'static str = "::=";
+const TICK: &'static str = "`";
 
 static TS: &'static [&'static str] = &[COMMA, OR, COLON, ARROW, TICK];
-static INDEXES: &'static [uint] = &[0, 1, 2, 3, 4];
+static INDEXES: &'static [usize] = &[0, 1, 2, 3, 4];
 
 static QUOTE: char = '\'';
 
@@ -58,16 +57,16 @@ pub fn tokenise(input: &'static str) -> Vec<&'static str> {
 
 struct Lexer {
     input: &'static str,
-    start: uint,
-    end: uint,
+    start: usize,
+    end: usize,
 }
 
-#[postcond="result.start == result.end"]
+#[postcond="__result.start == __result.end"]
 fn new_lexer(input: &'static str) -> Lexer {
     Lexer {
         input: input,
-        start: 0u,
-        end: 0u,
+        start: 0,
+        end: 0,
     }
 }
 
@@ -90,7 +89,7 @@ fn next(this: &mut Lexer) -> Option<&'static str> {
 // Returns the current token.
 #[precond="this.end > this.start"]
 fn cur_token(this: &Lexer) -> &'static str {
-    this.input.slice(this.start, this.end)
+    &this.input[this.start..this.end]
 }
 
 // Advance start to next non-whitespace char, or EOF.
@@ -107,7 +106,7 @@ fn scan_to_token(this: &mut Lexer) {
 #[postcond="this.end - this.start > 0 && !is_space(this, this.end-1)"]
 fn scan_token(this: &mut Lexer) {
     // The set of possible terminals we could be lexing.
-    let mut terminals: HashSet<uint> = HashSet::new();
+    let mut terminals: HashSet<usize> = HashSet::new();
 
     // If the token is quoted, eat the opening quote and remember to eat the
     // closing quote at the end.
@@ -118,7 +117,7 @@ fn scan_token(this: &mut Lexer) {
         terminals.extend(INDEXES.iter().map(|i| *i));
         // See if the first char matches any terminal. Means we'll match the
         // first char twice, but no biggie.
-        terminals = terminals.move_iter().filter(
+        terminals = terminals.into_iter().filter(
             |t| this.input.as_bytes()[this.start] == TS[*t].as_bytes()[0]).collect();
         this.end += 1;
         (false, terminals.len() > 0)
@@ -153,14 +152,14 @@ fn scan_token(this: &mut Lexer) {
             } else {
                 false
             };
-            terminals = terminals.move_iter().filter(|t| {
+            terminals = terminals.into_iter().filter(|t| {
                 let offset = this.end - this.start;
                 offset < TS[*t].len()
                     && this.input.as_bytes()[this.end] == TS[*t].as_bytes()[offset]
             }).collect();
             if terminals.len() == 0 {
                 // Got to the end of the only possibility.
-                assert!(winner, "WHOOPS! Went from >1 to 0 possibilities to lex")
+                assert!(winner, "WHOOPS! Went from >1 to 0 possibilities to lex");
                 return;
             }
         } else {
@@ -178,13 +177,13 @@ fn scan_token(this: &mut Lexer) {
 
 // true if self.start points to whitespace (space or newline)
 #[precond="index < this.input.as_bytes().len()"]
-fn is_space(this: &Lexer, index: uint) -> bool {
+fn is_space(this: &Lexer, index: usize) -> bool {
     this.input.as_bytes()[index] == ' ' as u8 || this.input.as_bytes()[index] == '\n' as u8
 }
 
 // true if self.start points to '
 #[precond="index < this.input.as_bytes().len()"]
-fn is_quote(this: &Lexer, index: uint) -> bool {
+fn is_quote(this: &Lexer, index: usize) -> bool {
     this.input.as_bytes()[index] == QUOTE as u8
 }
 

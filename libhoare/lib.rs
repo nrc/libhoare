@@ -10,10 +10,7 @@
 
 // See ../readme.md for an overview.
 
-#![crate_type="dylib"]
-#![crate_name="hoare"]
-#![feature(plugin_registrar)]
-#![feature(quote)]
+#![feature(plugin_registrar, quote, rustc_private)]
 
 extern crate rustc;
 extern crate syntax;
@@ -31,17 +28,17 @@ use rustc::plugin::Registry;
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_syntax_extension(token::intern("precond"),
-                                  Modifier(box precond));
+                                  Modifier(Box::new(precond)));
     reg.register_syntax_extension(token::intern("postcond"),
-                                  Modifier(box postcond));
+                                  Modifier(Box::new(postcond)));
     reg.register_syntax_extension(token::intern("invariant"),
-                                  Modifier(box invariant));
+                                  Modifier(Box::new(invariant)));
     reg.register_syntax_extension(token::intern("debug_precond"),
-                                  Modifier(box debug_precond));
+                                  Modifier(Box::new(debug_precond)));
     reg.register_syntax_extension(token::intern("debug_postcond"),
-                                  Modifier(box debug_postcond));
+                                  Modifier(Box::new(debug_postcond)));
     reg.register_syntax_extension(token::intern("debug_invariant"),
-                                  Modifier(box debug_invariant));
+                                  Modifier(Box::new(debug_invariant)));
 }
 
 fn precond(cx: &mut ExtCtxt,
@@ -55,7 +52,7 @@ fn precond(cx: &mut ExtCtxt,
                 Some(pred) => pred,
                 None => return item.clone()
             };
-            let pred_str = pred.get();
+            let pred_str = &pred;
             let pred = cx.parse_expr(pred_str.to_string());
 
             // Construct the wrapper function.
@@ -64,7 +61,7 @@ fn precond(cx: &mut ExtCtxt,
             let mut stmts = Vec::new();
             stmts.push(assert(&*cx, "precondition of", &fn_name, pred.clone(), pred_str));
 
-            let fn_name = ast::Ident::new(token::intern(format!("__inner_fn_{}", fn_name).as_slice()));
+            let fn_name = ast::Ident::new(token::intern(&format!("__inner_fn_{}", fn_name)));
             // Construct the inner function.
             let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_name, inner_item));
@@ -99,7 +96,7 @@ fn postcond(cx: &mut ExtCtxt,
                 Some(pred) => pred,
                 None => return item.clone()
             };
-            let pred_str = pred.get();
+            let pred_str = &pred;
             // Rename `return` to `__result`
             let pred_str = pred_str.replace("return", "__result");
             let pred = cx.parse_expr(pred_str.clone());
@@ -108,7 +105,7 @@ fn postcond(cx: &mut ExtCtxt,
             let fn_name = token::get_ident(item.ident);
 
             let mut stmts = Vec::new();
-            let fn_ident = ast::Ident::new(token::intern(format!("__inner_{}", fn_name).as_slice()));
+            let fn_ident = ast::Ident::new(token::intern(&format!("__inner_{}", fn_name)));
             // Construct the inner function.
             let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_ident, inner_item));
@@ -121,7 +118,7 @@ fn postcond(cx: &mut ExtCtxt,
             let ty_args = ty_args(generics, sp);
             stmts.push(assign_expr(&*cx, fn_ident, args, ty_args));
 
-            stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, pred_str.as_slice()));
+            stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, &pred_str[..]));
 
             let body = fn_body(cx, stmts, sp);
             P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
@@ -145,7 +142,7 @@ fn invariant(cx: &mut ExtCtxt,
                 Some(pred) => pred,
                 None => return item.clone()
             };
-            let pred_str = pred.get();
+            let pred_str = &pred;
             let pred = cx.parse_expr(pred_str.to_string());
 
             // Construct the wrapper function.
@@ -154,7 +151,7 @@ fn invariant(cx: &mut ExtCtxt,
             let mut stmts = Vec::new();
             stmts.push(assert(&*cx, "invariant entering", &fn_name, pred.clone(), pred_str));
 
-            let fn_ident = ast::Ident::new(token::intern(format!("__inner_{}", fn_name).as_slice()));
+            let fn_ident = ast::Ident::new(token::intern(&format!("__inner_{}", fn_name)));
             // Construct the inner function.
             let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
             stmts.push(fn_decl(sp, fn_ident, inner_item));
@@ -200,7 +197,8 @@ fn debug_invariant(cx: &mut ExtCtxt,
 }
 
 // Executes f if we are compiling in debug mode, returns item otherwise.
-fn if_debug(cx: &mut ExtCtxt, f: |&mut ExtCtxt| -> P<Item>, item: P<Item>) -> P<Item> {
+fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: P<Item>) -> P<Item>
+    where F: Fn(&mut ExtCtxt) -> P<Item> {
     if !cx.cfg().iter().any(
         |item| item.node == ast::MetaWord(token::get_name(token::intern("ndebug")))) {
         f(cx)
@@ -224,7 +222,7 @@ fn make_predicate(cx: &ExtCtxt,
     match &attr.node {
         &ast::MetaNameValue(ref name, ref lit) => {
             if name == &token::get_name(token::intern(cond_name)) ||
-               name == &token::get_name(token::intern(debug_name(cond_name).as_slice())) {
+               name == &token::get_name(token::intern(&debug_name(cond_name)[..])) {
                 match &lit.node {
                     &ast::LitStr(ref lit, _) => {
                         Some(lit.clone())
@@ -235,8 +233,7 @@ fn make_predicate(cx: &ExtCtxt,
                     }
                 }
             } else {
-                cx.span_err(sp, format!("unexpected name in condition: {}",
-                                        name).as_slice());
+                cx.span_err(sp, &format!("unexpected name in condition: {}", name)[..]);
                 None
             }
         },
@@ -254,7 +251,8 @@ fn assert(cx: &ExtCtxt,
           fn_name: &token::InternedString,
           pred: P<ast::Expr>,
           pred_str: &str) -> P<ast::Stmt> {
-    let label = format!("\"{} {} ({})\"", cond_type, fn_name, pred_str);
+    let label = format!("\"{} {} ({})\"", cond_type, fn_name,
+                        pred_str.replace("\"", "\\\""));
     let label = cx.parse_expr(label);
     quote_stmt!(&*cx, assert!($pred, $label);)
 }
@@ -275,7 +273,7 @@ fn is_sane_pattern(pat: &ast::Pat) -> bool {
         &ast::PatIdent(..) => false,
         &ast::PatEnum(_, Some(ref ps)) | &ast::PatTup(ref ps) => ps.iter().all(|p| is_sane_pattern(&**p)),
         &ast::PatEnum(..) => false,
-        &ast::PatBox(ref p) | &ast::PatRegion(ref p) => is_sane_pattern(&**p)
+        &ast::PatBox(ref p) | &ast::PatRegion(ref p, _) => is_sane_pattern(&**p)
     }
 }
 
@@ -287,7 +285,7 @@ fn args(cx: &ExtCtxt, decl: &ast::FnDecl, sp: Span) -> Option<Vec<ast::TokenTree
     }
 
     let cm = &cx.parse_sess.span_diagnostic.cm;
-    let mut args = decl.inputs.iter().map(|a| {
+    let args = decl.inputs.iter().map(|a| {
         // span_to_snippet really shouldn't return None, so I hope the
         // unwrap is OK. Not sure we can do anything it is does in any case.
         cx.parse_tts(cm.span_to_snippet(a.pat.span).unwrap())
@@ -347,7 +345,6 @@ fn fn_body(cx: &ExtCtxt,
            stmts: Vec<P<ast::Stmt>>,
            sp: Span) -> P<ast::Block> {
     P(ast::Block {
-        view_items: vec!(),
         stmts: stmts,
         expr: Some(result_expr(&*cx)),
         id: ast::DUMMY_NODE_ID,

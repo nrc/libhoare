@@ -8,24 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(phase)]
+#![feature(plugin)]
 
-#[phase(plugin)]
-extern crate hoare;
+#![plugin(hoare)]
 
 // Examples from readme.md
 
 #[precond="x > 0"]
-#[postcond="result > 1"]
-fn foo(x: int) -> int {
+#[postcond="__result > 1"]
+fn foo(x: i64) -> i64 {
     let y = 45 / x;
     y + 1
 }
 
 
 struct Bar {
-    f1: int,
-    f2: int
+    f1: i64,
+    f2: i64
 }
 
 #[invariant="x.f1 < x.f2"]
