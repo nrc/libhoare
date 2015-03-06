@@ -1,18 +1,10 @@
+cargo test
 echo cfail tests
 echo
-$RUSTC test/cfail-1.rs -L ../obj
-$RUSTC test/cfail-2.rs -L ../obj
-$RUSTC test/cfail-3.rs -L ../obj
-$RUSTC test/cfail-4.rs -L ../obj
-$RUSTC test/cfail-5.rs -L ../obj
-$RUSTC test/cfail-6.rs -L ../obj
+$RUSTC tests-cfail/cfail-1.rs -L ./target
+$RUSTC tests-cfail/cfail-2.rs -L ./target
+$RUSTC tests-cfail/cfail-3.rs -L ./target
+$RUSTC tests-cfail/cfail-4.rs -L ./target
+$RUSTC tests-cfail/cfail-5.rs -L ./target
+$RUSTC tests-cfail/cfail-6.rs -L ./target
 echo
-echo unit tests
-echo
-$RUSTC test/mod.rs --test -L ../obj -o ../obj/test
-../obj/test
-echo
-echo rpass tests
-echo
-$RUSTC test/rpass-1.rs -L ../obj -o ../obj/rpass-1
-../obj/rpass-1

@@ -8,10 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(phase)]
+#![feature(plugin)]
 
-#[phase(plugin)]
-extern crate hoare;
+#![plugin(hoare)]
 
 #[cfg(test)]
 pub use test::pub_test_trivial_4;
@@ -205,21 +204,21 @@ mod test {
     fn test_in_out_1() {
         let mut x = 15;
         tio1(&mut x);
-    }    
+    }
     #[postcond="*x > 10"]
     fn tio2(x: &mut int) { *x = 25; }
     #[test]
     fn test_in_out_2(){
         let mut x = 15;
         tio2(&mut x);
-    }    
+    }
     #[invariant="*x > 10"]
     fn tio3(x: &mut int) { *x = 25; }
     #[test]
     fn test_in_out_3(){
         let mut x = 15;
         tio3(&mut x);
-    }    
+    }
     #[precond="*x > 10"]
     #[postcond="*x > 10"]
     #[invariant="*x > 10"]
@@ -228,7 +227,7 @@ mod test {
     fn test_in_out_4(){
         let mut x = 15;
         tio4(&mut x);
-    }    
+    }
 
     #[precond="*x > 10"]
     fn tio1f(x: &mut int) { *x = 25; }
@@ -237,7 +236,7 @@ mod test {
     fn test_in_out_1_fail(){
         let mut x = 5;
         tio1f(&mut x);
-    }     
+    }
     #[postcond="*x > 10"]
     fn tio2f(x: &mut int) { *x = 5; }
     #[test]
@@ -245,7 +244,7 @@ mod test {
     fn test_in_out_2_fail(){
         let mut x = 15;
         tio2f(&mut x);
-    }    
+    }
     #[invariant="*x > 10"]
     fn tio3f(x: &mut int) { *x = 25; }
     #[test]
@@ -253,7 +252,7 @@ mod test {
     fn test_in_out_3_fail(){
         let mut x = 5;
         tio3f(&mut x);
-    }    
+    }
     #[invariant="*x > 10"]
     fn tio4f(x: &mut int) { *x = 5; }
     #[test]
@@ -261,5 +260,5 @@ mod test {
     fn test_in_out_4_fail(){
         let mut x = 15;
         tio4f(&mut x);
-    }    
+    }
 }

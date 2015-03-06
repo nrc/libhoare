@@ -8,28 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(phase)]
+// These tests should all fail to compile, but should not ICE or give
+// unreasonable error messages.
 
-#[phase(plugin)]
-extern crate hoare;
+#![feature(plugin)]
 
-#[precond="x != 0"]
-fn foo(x: int) {
-    println!("hello world! {}", x);    
-}
+#![plugin(hoare)]
 
-#[debug_invariant="*x > 60"]
-fn bar<X: std::fmt::Show>(x: &mut int, y: X) -> int {
-    println!("hello world! {} {}", x, y);
-    *x += 20;
-    35
-}
+#[precond=""]
+fn test_bad_pred() {}
 
-fn main() {
-    // A very simple example.
-    foo(1);
+fn main() {}
 
-    // A slightly more interesting test case.
-    let mut x = 65;
-    bar::<int>(&mut x, 10);
-}

@@ -11,10 +11,9 @@
 // These tests should all fail to compile, but should not ICE or give
 // unreasonable error messages.
 
-#![feature(phase)]
+#![feature(plugin)]
 
-#[phase(plugin)]
-extern crate hoare;
+#![plugin(hoare)]
 
 #[precond="()"]
 fn test_bad_pred() {}
