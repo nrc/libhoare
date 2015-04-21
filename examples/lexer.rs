@@ -23,7 +23,7 @@
 // inside the quotes and the quotes themselves are a single token (including
 // symbols and whitespace).
 
-#![feature(plugin)]
+#![feature(plugin, custom_attribute)]
 
 #![plugin(hoare)]
 
