@@ -253,7 +253,7 @@ fn assert(cx: &ExtCtxt,
     let label = format!("\"{} {} ({})\"", cond_type, fn_name,
                         pred_str.replace("\"", "\\\""));
     let label = cx.parse_expr(label);
-    quote_stmt!(&*cx, assert!($pred, $label);)
+    quote_stmt!(&*cx, assert!($pred, $label);).unwrap()
 }
 
 // Check that a pattern can trivially be used to instantiate that pattern.
@@ -270,7 +270,8 @@ fn is_sane_pattern(pat: &ast::Pat) -> bool {
         &ast::PatLit(_) | &ast::PatRange(..) | &ast::PatVec(..) => false,
         &ast::PatIdent(ast::BindByValue(ast::MutImmutable), _, _) => true,
         &ast::PatIdent(..) => false,
-        &ast::PatEnum(_, Some(ref ps)) | &ast::PatTup(ref ps) => ps.iter().all(|p| is_sane_pattern(&**p)),
+        &ast::PatEnum(_, Some(ref ps)) | &ast::PatTup(ref ps) =>
+            ps.iter().all(|p| is_sane_pattern(&**p)),
         &ast::PatEnum(..) => false,
         &ast::PatBox(ref p) | &ast::PatRegion(ref p, _) => is_sane_pattern(&**p)
     }
@@ -295,7 +296,7 @@ fn ty_args(generics: &ast::Generics, sp: Span) -> Vec<ast::TokenTree> {
     generics.ty_params
         .iter()
         .map(|tp| tp.ident)
-        .map(|ident| Some(token::Ident(ident, token::Plain)))
+        .map(|ident| vec![token::Ident(ident, token::Plain)])
         .collect::<Vec<_>>()
         .connect(&token::Comma)
         .into_iter()
@@ -342,9 +343,9 @@ fn assign_expr(cx: &ExtCtxt,
                arg_toks: Vec<ast::TokenTree>,
                ty_arg_toks: Vec<ast::TokenTree>) -> P<ast::Stmt> {
     if ty_arg_toks.len() > 0 {
-        quote_stmt!(cx, let __result = $fn_name::<$ty_arg_toks>($arg_toks);)
+        quote_stmt!(cx, let __result = $fn_name::<$ty_arg_toks>($arg_toks);).unwrap()
     } else {
-        quote_stmt!(cx, let __result = $fn_name($arg_toks);)
+        quote_stmt!(cx, let __result = $fn_name($arg_toks);).unwrap()
     }
 }
 
