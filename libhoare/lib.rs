@@ -45,7 +45,7 @@ fn precond(cx: &mut ExtCtxt,
            attr: &MetaItem,
            item: P<Item>) -> P<Item> {
     match &item.node {
-        &ast::ItemFn(ref decl, style, abi, ref generics, _) => {
+        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
             // Parse out the predicate supplied to the syntax extension.
             let pred = match make_predicate(cx, sp, attr, "precond") {
                 Some(pred) => pred,
@@ -74,7 +74,12 @@ fn precond(cx: &mut ExtCtxt,
             stmts.push(assign_expr(&*cx, fn_name, args, ty_args));
 
             let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
+            P(Item { node: ast::ItemFn(decl.clone(),
+                                       unsafety,
+                                       constness,
+                                       abi,
+                                       generics.clone(),
+                                       body),
                      .. (*item).clone() })
         }
         _ => {
@@ -89,7 +94,7 @@ fn postcond(cx: &mut ExtCtxt,
             attr: &MetaItem,
             item: P<Item>) -> P<Item> {
     match &item.node {
-        &ast::ItemFn(ref decl, style, abi, ref generics, _) => {
+        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
             // Parse out the predicate supplied to the syntax extension.
             let pred = match make_predicate(cx, sp, attr, "postcond") {
                 Some(pred) => pred,
@@ -120,7 +125,12 @@ fn postcond(cx: &mut ExtCtxt,
             stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, &pred_str[..]));
 
             let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
+            P(Item { node: ast::ItemFn(decl.clone(),
+                                       unsafety,
+                                       constness,
+                                       abi,
+                                       generics.clone(),
+                                       body),
                      .. (*item).clone() })
         }
         _ => {
@@ -135,7 +145,7 @@ fn invariant(cx: &mut ExtCtxt,
              attr: &MetaItem,
              item: P<Item>) -> P<Item> {
     match &item.node {
-        &ast::ItemFn(ref decl, style, abi, ref generics, _) => {
+        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
             // Parse out the predicate supplied to the syntax extension.
             let pred = match make_predicate(cx, sp, attr, "invariant") {
                 Some(pred) => pred,
@@ -166,7 +176,12 @@ fn invariant(cx: &mut ExtCtxt,
             stmts.push(assert(&*cx, "invariant leaving", &fn_name, pred, pred_str));
 
             let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body),
+            P(Item { node: ast::ItemFn(decl.clone(),
+                                       unsafety,
+                                       constness,
+                                       abi,
+                                       generics.clone(),
+                                       body),
                      .. (*item).clone() })
         }
         _ => {
@@ -262,18 +277,19 @@ fn assert(cx: &ExtCtxt,
 // syntax as the pattern is declared. But if the pattern is `z @ (x,y)` we cannot
 // (we need to use `(x, y)`).
 //
-// Ideally we would just translate the pattern to the correct one. But in for now
+// Ideally we would just translate the pattern to the correct one. But for now
 // we just check if we can skip the translation phase and fail otherwise (FIXME).
 fn is_sane_pattern(pat: &ast::Pat) -> bool {
     match &pat.node {
         &ast::PatWild(_) | &ast::PatMac(_) | &ast::PatStruct(..) |
-        &ast::PatLit(_) | &ast::PatRange(..) | &ast::PatVec(..) => false,
+        &ast::PatLit(_) | &ast::PatRange(..) | &ast::PatVec(..) |
+        &ast::PatQPath(..) => false,
         &ast::PatIdent(ast::BindByValue(ast::MutImmutable), _, _) => true,
         &ast::PatIdent(..) => false,
         &ast::PatEnum(_, Some(ref ps)) | &ast::PatTup(ref ps) =>
-            ps.iter().all(|p| is_sane_pattern(&**p)),
+            ps.iter().all(|p| is_sane_pattern(p)),
         &ast::PatEnum(..) => false,
-        &ast::PatBox(ref p) | &ast::PatRegion(ref p, _) => is_sane_pattern(&**p)
+        &ast::PatBox(ref p) | &ast::PatRegion(ref p, _) => is_sane_pattern(p)
     }
 }
 
@@ -310,10 +326,15 @@ fn fn_decl(sp: Span,
            fn_name: ast::Ident,
            item: P<Item>) -> P<ast::Stmt> {
     match &item.node {
-        &ast::ItemFn(ref decl, style, abi, ref generics, ref body) => {
+        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
             let inner = Item {
                 ident: fn_name,
-                node: ast::ItemFn(decl.clone(), style, abi, generics.clone(), body.clone()),
+                node: ast::ItemFn(decl.clone(),
+                                  unsafety,
+                                  constness,
+                                  abi,
+                                  generics.clone(),
+                                  body.clone()),
                 .. (*item).clone() };
 
             let inner = ast::DeclItem(P(inner));
