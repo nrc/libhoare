@@ -37,10 +37,9 @@ Then (whether or not you used Cargo), in your crate you will need the following
 boilerplate:
 
 ```
-#![feature(phase)]
+#![feature(plugin, custom_attribute)]
 
-#[phase(plugin)]
-extern crate hoare;
+#![plugin(hoare)]
 ```
 
 Then you can use the macros as shown below.
