@@ -12,7 +12,7 @@
 
 #![feature(plugin_registrar, quote, rustc_private)]
 
-// TODO refactor
+// TODO refactor *_body functions
 // TODO weed out DUMMY_SPs
 // TODO tests for method preconds
 // TODO fixup egs and tests, inline TODOs
@@ -68,6 +68,60 @@ fn precond(cx: &mut ExtCtxt,
     map_annotatble(cx, sp, attr, item, precond_body, "Precondition")
 }
 
+fn postcond(cx: &mut ExtCtxt,
+            sp: Span,
+            attr: &MetaItem,
+            item: P<Item>) -> P<Item> {
+    inc_run_count();
+
+    match &item.node {
+        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
+            let body = match postcond_body(item.ident, decl, body, cx, sp, attr) {
+                Ok(body) => body,
+                Err(_) => return item.clone()
+            };
+            P(Item { node: ast::ItemFn(decl.clone(),
+                                       unsafety,
+                                       constness,
+                                       abi,
+                                       generics.clone(),
+                                       body),
+                     .. (*item).clone() })
+        }
+        _ => {
+            cx.span_err(sp, "Postcondition on non-function item");
+            item.clone()
+        }
+    }
+}
+
+fn invariant(cx: &mut ExtCtxt,
+             sp: Span,
+             attr: &MetaItem,
+             item: P<Item>) -> P<Item> {
+    inc_run_count();
+
+    match &item.node {
+        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
+            let body = match invariant_body(item.ident, decl, body, cx, sp, attr) {
+                Ok(body) => body,
+                Err(_) => return item.clone()
+            };
+            P(Item { node: ast::ItemFn(decl.clone(),
+                                       unsafety,
+                                       constness,
+                                       abi,
+                                       generics.clone(),
+                                       body),
+                     .. (*item).clone() })
+        }
+        _ => {
+            cx.span_err(sp, "Invariant on non-function item");
+            item.clone()
+        }
+    }
+}
+
 fn precond_body(ident: ast::Ident,
                 decl: &ast::FnDecl,
                 body: &ast::Block,
@@ -99,106 +153,76 @@ fn precond_body(ident: ast::Ident,
     Ok(fn_body(cx, stmts, sp))
 }
 
-fn postcond(cx: &mut ExtCtxt,
-            sp: Span,
-            attr: &MetaItem,
-            item: P<Item>) -> P<Item> {
-    inc_run_count();
+fn postcond_body(ident: ast::Ident,
+                 decl: &ast::FnDecl,
+                 body: &ast::Block,
+                 cx: &mut ExtCtxt,
+                 sp: Span,
+                 attr: &MetaItem)
+    -> Result<P<ast::Block>, ()>
+{
+    // Parse out the predicate supplied to the syntax extension.
+    let pred = try!(make_predicate(cx, sp, attr, "postcond"));
+    let pred_str = &pred;
 
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-            // Parse out the predicate supplied to the syntax extension.
-            let pred = match make_predicate(cx, sp, attr, "postcond") {
-                Ok(pred) => pred,
-                Err(_) => return item.clone()
-            };
-            let pred_str = &pred;
-            // Rename `return` to `__result`
-            let result_name = result_name();
-            let pred_str = pred_str.replace("return", &token::get_ident(result_name));
-            let pred = cx.parse_expr(pred_str.clone());
+    let result_name = result_name();
 
-            // Construct the new function.
-            let fn_name = token::get_ident(item.ident);
-            let mut stmts = Vec::new();
+    // Rename `return` to `__result`
+    let pred_str = pred_str.replace("return", &token::get_ident(result_name));
+    let pred = cx.parse_expr(pred_str.clone());
 
-            let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
-            stmts.push(init_stmt);
+    // Construct the new function.
+    let fn_name = token::get_ident(ident);
+    let mut stmts = Vec::new();
 
-            stmts.push(make_body(cx, (**body).clone(), sp, &decl.output));
+    let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
+    stmts.push(init_stmt);
 
-            let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
-            stmts.push(unwrap);
+    stmts.push(make_body(cx, (*body).clone(), sp, &decl.output));
 
-            // Check the postcondition.
-            stmts.push(assert(cx, "postcondition of", &fn_name, pred, &pred_str));
+    let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
+    stmts.push(unwrap);
 
-            let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
-        }
-        _ => {
-            cx.span_err(sp, "Postcondition on non-function item");
-            item.clone()
-        }
-    }
+    // Check the postcondition.
+    stmts.push(assert(cx, "postcondition of", &fn_name, pred, &pred_str));
+
+    Ok(fn_body(cx, stmts, sp))
 }
 
+fn invariant_body(ident: ast::Ident,
+                  decl: &ast::FnDecl,
+                  body: &ast::Block,
+                  cx: &mut ExtCtxt,
+                  sp: Span,
+                  attr: &MetaItem)
+    -> Result<P<ast::Block>, ()>
+{
+    // Parse out the predicate supplied to the syntax extension.
+    let pred = try!(make_predicate(cx, sp, attr, "invariant"));
+    let pred_str = &pred;
+    let pred = cx.parse_expr(pred_str.to_string());
 
-fn invariant(cx: &mut ExtCtxt,
-             sp: Span,
-             attr: &MetaItem,
-             item: P<Item>) -> P<Item> {
-    inc_run_count();
+    // Construct the new function.
+    let fn_name = token::get_ident(ident);
+    let result_name = result_name();
 
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-            // Parse out the predicate supplied to the syntax extension.
-            let pred = match make_predicate(cx, sp, attr, "invariant") {
-                Ok(pred) => pred,
-                Err(_) => return item.clone()
-            };
-            let pred_str = &pred;
-            let pred = cx.parse_expr(pred_str.to_string());
+    let mut stmts = Vec::new();
+    stmts.push(assert(cx, "invariant entering", &fn_name, pred.clone(), pred_str));
 
-            // Construct the new function.
-            let fn_name = token::get_ident(item.ident);
-            let result_name = result_name();
+    let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
+    stmts.push(init_stmt);
 
-            let mut stmts = Vec::new();
-            stmts.push(assert(cx, "invariant entering", &fn_name, pred.clone(), pred_str));
+    stmts.push(make_body(cx, (*body).clone(), sp, &decl.output));
 
-            let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
-            stmts.push(init_stmt);
+    let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
+    stmts.push(unwrap);
 
-            stmts.push(make_body(cx, (**body).clone(), sp, &decl.output));
+    // Check postcondition.
+    stmts.push(assert(cx, "invariant leaving", &fn_name, pred, pred_str));
 
-            let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
-            stmts.push(unwrap);
-
-            // Check postcondition.
-            stmts.push(assert(&*cx, "invariant leaving", &fn_name, pred, pred_str));
-
-            let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
-        }
-        _ => {
-            cx.span_err(sp, "Invariant on non-function item");
-            item.clone()
-        }
-    }
+    Ok(fn_body(cx, stmts, sp))
 }
+
 
 // Maps f over item, which must be a function-like item-like-thing.
 fn map_annotatble<F>(cx: &mut ExtCtxt,
