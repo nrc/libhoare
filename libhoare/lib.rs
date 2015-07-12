@@ -1,4 +1,4 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -12,14 +12,20 @@
 
 #![feature(plugin_registrar, quote, rustc_private)]
 
+// TODO bustage in test hello.rs
+// TODO bustage with `Self` used in methods
+// TODO fixup egs and tests, refactor inline TODOs
+
 extern crate rustc;
 extern crate syntax;
 
 use syntax::ast;
 use syntax::ast::{Item, MetaItem};
+use syntax::ast_util::ident_to_path;
 use syntax::codemap::{Span,Spanned};
-use syntax::ext::base::{ExtCtxt, Modifier};
-use syntax::ext::quote::rt::ExtParseUtils;
+use syntax::ext::base::{ExtCtxt, Modifier, MultiModifier, Annotatable};
+use syntax::ext::quote::rt::{ExtParseUtils, ToTokens};
+use syntax::ext::build::AstBuilder;
 use syntax::parse::token;
 use syntax::ptr::P;
 use rustc::plugin::Registry;
@@ -27,13 +33,13 @@ use rustc::plugin::Registry;
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_syntax_extension(token::intern("precond"),
-                                  Modifier(Box::new(precond)));
+                                  MultiModifier(Box::new(precond)));
     reg.register_syntax_extension(token::intern("postcond"),
                                   Modifier(Box::new(postcond)));
     reg.register_syntax_extension(token::intern("invariant"),
                                   Modifier(Box::new(invariant)));
     reg.register_syntax_extension(token::intern("debug_precond"),
-                                  Modifier(Box::new(debug_precond)));
+                                  MultiModifier(Box::new(debug_precond)));
     reg.register_syntax_extension(token::intern("debug_postcond"),
                                   Modifier(Box::new(debug_postcond)));
     reg.register_syntax_extension(token::intern("debug_invariant"),
@@ -43,50 +49,179 @@ pub fn plugin_registrar(reg: &mut Registry) {
 fn precond(cx: &mut ExtCtxt,
            sp: Span,
            attr: &MetaItem,
-           item: P<Item>) -> P<Item> {
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
-            // Parse out the predicate supplied to the syntax extension.
-            let pred = match make_predicate(cx, sp, attr, "precond") {
-                Some(pred) => pred,
-                None => return item.clone()
+           item: Annotatable)
+    -> Annotatable
+{
+    match item {
+        Annotatable::Item(item) => {
+            let result = match &item.node {
+                &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
+                    // Parse out the predicate supplied to the syntax extension.
+                    let pred = match make_predicate(cx, sp, attr, "precond") {
+                        Some(pred) => pred,
+                        None => return Annotatable::Item(item.clone())
+                    };
+                    let pred_str = &pred;
+                    let pred = cx.parse_expr(pred_str.to_string());
+
+                    // Construct the wrapper function.
+                    let fn_name = token::get_ident(item.ident);
+
+                    let mut stmts = Vec::new();
+                    stmts.push(assert(cx, "precondition of", &fn_name, pred.clone(), pred_str));
+
+                    let fn_name = ast::Ident::new(token::intern(&format!("__inner_fn_{}", fn_name)));
+
+                    // Construct the inner function.
+                    let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
+                    stmts.push(fn_decl(sp, fn_name, inner_item));
+
+                    // Construct the function call.
+                    let args = match args(cx, decl, sp) {
+                        Some(args) => args,
+                        None => { return Annotatable::Item(item.clone()); }
+                    };
+                    let ty_args = ty_args(generics, sp);
+                    stmts.push(assign_expr(cx, fn_name, args, ty_args));
+
+                    let body = fn_body(cx, stmts, sp);
+                    P(Item { node: ast::ItemFn(decl.clone(),
+                                               unsafety,
+                                               constness,
+                                               abi,
+                                               generics.clone(),
+                                               body),
+                             .. (*item).clone() })
+                }
+                _ => {
+                    cx.span_err(sp, "Precondition on non-function item");
+                    item.clone()
+                }
             };
-            let pred_str = &pred;
-            let pred = cx.parse_expr(pred_str.to_string());
 
-            // Construct the wrapper function.
-            let fn_name = token::get_ident(item.ident);
-
-            let mut stmts = Vec::new();
-            stmts.push(assert(&*cx, "precondition of", &fn_name, pred.clone(), pred_str));
-
-            let fn_name = ast::Ident::new(token::intern(&format!("__inner_fn_{}", fn_name)));
-            // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
-            stmts.push(fn_decl(sp, fn_name, inner_item));
-
-            // Construct the function call.
-            let args = match args(cx, &**decl, sp) {
-                Some(args) => args,
-                None => { return item.clone(); }
-            };
-            let ty_args = ty_args(generics, sp);
-            stmts.push(assign_expr(&*cx, fn_name, args, ty_args));
-
-            let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
+            Annotatable::Item(result)
         }
-        _ => {
-            cx.span_err(sp, "Precondition on non-function item");
-            item.clone()
+        Annotatable::ImplItem(item) => {
+            match item.node {
+                ast::ImplItem_::MethodImplItem(ref sig, ref body) => {
+                    match method_precond(item.ident, sig, body, cx, sp, attr) {
+                        Some((sig, body)) => Annotatable::ImplItem(P(ast::ImplItem {
+                            node: ast::ImplItem_::MethodImplItem(sig, body),
+                            .. (*item).clone()
+                        })),
+                        None => Annotatable::ImplItem(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, "Precondition on non-function impl item");
+                    Annotatable::ImplItem(item.clone())
+                }
+            }
+        }
+        Annotatable::TraitItem(item) => {
+            match item.node {
+                ast::TraitItem_::MethodTraitItem(ref sig, Some(ref body)) => {
+                    match method_precond(item.ident, sig, body, cx, sp, attr) {
+                        Some((sig, body)) => Annotatable::TraitItem(P(ast::TraitItem {
+                            node: ast::TraitItem_::MethodTraitItem(sig, Some(body)),
+                            .. (*item).clone()
+                        })),
+                        None => Annotatable::TraitItem(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, "Precondition on non-function trait item");
+                    Annotatable::TraitItem(item.clone())
+                }
+            }
         }
     }
+}
+
+
+fn method_precond(ident: ast::Ident,
+                  sig: &ast::MethodSig,
+                  body: &ast::Block,
+                  cx: &mut ExtCtxt,
+                  sp: Span,
+                  attr: &MetaItem) -> Option<(ast::MethodSig, P<ast::Block>)> {
+    let &ast::MethodSig { unsafety,
+                          constness,
+                          abi,
+                          ref decl,
+                          ref generics,
+                          ref explicit_self } = sig;
+
+    // Parse out the predicate supplied to the syntax extension.
+    let pred = match make_predicate(cx, sp, attr, "precond") {
+        Some(pred) => pred,
+        None => return None,
+    };
+    let pred_str = &pred;
+    let pred = cx.parse_expr(pred_str.to_string());
+
+    // Construct the wrapper function.
+    let fn_name = token::get_ident(ident);
+
+    let mut stmts = Vec::new();
+    stmts.push(assert(cx, "precondition of", &fn_name, pred.clone(), pred_str));
+
+    let fn_name = ast::Ident::new(token::intern(&format!("__inner_fn_{}", fn_name)));
+    // Construct the inner function.
+    
+    let ast::FnDecl { mut inputs, output, variadic } = (**decl).clone();
+    fn mk_self_ty(sp: Span, cx: &mut ExtCtxt) -> P<ast::Ty> {
+        cx.ty_path(ident_to_path(sp, token::special_idents::type_self))
+    }
+    let self_ty = match explicit_self.node {
+        ast::ExplicitSelf_::SelfStatic => None,
+        ast::ExplicitSelf_::SelfValue(_) => Some(mk_self_ty(sp, cx)),
+        ast::ExplicitSelf_::SelfRegion(lt, m, _) => {
+            let self_ty = mk_self_ty(sp, cx);
+            Some(cx.ty_rptr(sp, self_ty, lt, m))
+        },
+        ast::ExplicitSelf_::SelfExplicit(ref ty, _) => Some(ty.clone()),
+    };
+    if let Some(self_ty) = self_ty {
+        let self_arg = ast::Arg { ty: self_ty,
+                                  pat: cx.pat_ident(sp, token::str_to_ident("self")),
+                                  id: ast::DUMMY_NODE_ID};
+        inputs[0] = self_arg;
+    }
+    let new_decl = ast::FnDecl{ inputs: inputs,
+                                output: output,
+                                variadic: variadic };
+    let inner_item_fn = ast::ItemFn(P(new_decl),
+                                    unsafety,
+                                    constness,
+                                    abi,
+                                    generics.clone(),
+                                    P(body.clone()));
+    let inner_item = P(Item { ident: fn_name,
+                              attrs: Vec::new(),
+                              vis: ast::Inherited,
+                              id: ast::DUMMY_NODE_ID,
+                              node: inner_item_fn,
+                              span: sp,
+                            });
+    stmts.push(cx.stmt_item(sp, inner_item));
+
+    // Construct the function call.
+    let args = match args(cx, decl, sp) {
+        Some(args) => args,
+        None => return None,
+    };
+    let ty_args = ty_args(generics, sp);
+    stmts.push(assign_expr(cx, fn_name, args, ty_args));
+
+    let body = fn_body(cx, stmts, sp);
+    let sig = ast::MethodSig { unsafety: unsafety,
+                               constness: constness,
+                               abi: abi,
+                               decl: decl.clone(),
+                               generics: generics.clone(),
+                               explicit_self: (*explicit_self).clone() };
+    Some((sig, body))
 }
 
 fn postcond(cx: &mut ExtCtxt,
@@ -191,11 +326,12 @@ fn invariant(cx: &mut ExtCtxt,
     }
 }
 
+// TODO convert all these to use Annotatable
 fn debug_precond(cx: &mut ExtCtxt,
                  sp: Span,
                  attr: &MetaItem,
-                 item: P<Item>) -> P<Item> {
-    if_debug(cx, |cx| precond(cx, sp, attr, item.clone()), item.clone())
+                 item: Annotatable) -> Annotatable {
+    if_debug_tmp(cx, |cx| precond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_postcond(cx: &mut ExtCtxt,
                   sp: Span,
@@ -212,7 +348,19 @@ fn debug_invariant(cx: &mut ExtCtxt,
 
 // Executes f if we are compiling in debug mode, returns item otherwise.
 fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: P<Item>) -> P<Item>
-    where F: Fn(&mut ExtCtxt) -> P<Item> {
+    where F: Fn(&mut ExtCtxt) -> P<Item>
+{
+    if !cx.cfg().iter().any(
+        |item| item.node == ast::MetaWord(token::get_name(token::intern("ndebug")))) {
+        f(cx)
+    } else {
+        item
+    }
+}
+
+fn if_debug_tmp<F>(cx: &mut ExtCtxt, f: F, item: Annotatable) -> Annotatable
+    where F: Fn(&mut ExtCtxt) -> Annotatable
+{
     if !cx.cfg().iter().any(
         |item| item.node == ast::MetaWord(token::get_name(token::intern("ndebug")))) {
         f(cx)
@@ -265,10 +413,10 @@ fn assert(cx: &ExtCtxt,
           fn_name: &token::InternedString,
           pred: P<ast::Expr>,
           pred_str: &str) -> P<ast::Stmt> {
-    let label = format!("\"{} {} ({})\"", cond_type, fn_name,
+    let label = format!("{} {} ({})", cond_type, fn_name,
                         pred_str.replace("\"", "\\\""));
-    let label = cx.parse_expr(label);
-    quote_stmt!(&*cx, assert!($pred, $label);).unwrap()
+    let label = &label;
+    quote_stmt!(cx, assert!($pred, $label);).unwrap()
 }
 
 // Check that a pattern can trivially be used to instantiate that pattern.
