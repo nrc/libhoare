@@ -14,7 +14,7 @@
 
 // TODO refactor *_body functions
 // TODO weed out DUMMY_SPs
-// TODO tests for method preconds
+// TODO tests for method preconds, postconds, invariants
 // TODO fixup egs and tests, inline TODOs
 
 extern crate rustc;
@@ -23,7 +23,7 @@ extern crate syntax;
 use syntax::ast;
 use syntax::ast::{Item, MetaItem};
 use syntax::codemap::{self, Span};
-use syntax::ext::base::{ExtCtxt, Modifier, MultiModifier, Annotatable};
+use syntax::ext::base::{ExtCtxt, MultiModifier, Annotatable};
 use syntax::ext::quote::rt::{ExtParseUtils, ToTokens};
 use syntax::ext::build::AstBuilder;
 use syntax::fold::{Folder, noop_fold_expr, noop_fold_mac};
@@ -47,15 +47,15 @@ pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_syntax_extension(token::intern("precond"),
                                   MultiModifier(Box::new(precond)));
     reg.register_syntax_extension(token::intern("postcond"),
-                                  Modifier(Box::new(postcond)));
+                                  MultiModifier(Box::new(postcond)));
     reg.register_syntax_extension(token::intern("invariant"),
-                                  Modifier(Box::new(invariant)));
+                                  MultiModifier(Box::new(invariant)));
     reg.register_syntax_extension(token::intern("debug_precond"),
                                   MultiModifier(Box::new(debug_precond)));
     reg.register_syntax_extension(token::intern("debug_postcond"),
-                                  Modifier(Box::new(debug_postcond)));
+                                  MultiModifier(Box::new(debug_postcond)));
     reg.register_syntax_extension(token::intern("debug_invariant"),
-                                  Modifier(Box::new(debug_invariant)));
+                                  MultiModifier(Box::new(debug_invariant)));
 }
 
 fn precond(cx: &mut ExtCtxt,
@@ -71,55 +71,21 @@ fn precond(cx: &mut ExtCtxt,
 fn postcond(cx: &mut ExtCtxt,
             sp: Span,
             attr: &MetaItem,
-            item: P<Item>) -> P<Item> {
+            item: Annotatable)
+    -> Annotatable
+{
     inc_run_count();
-
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-            let body = match postcond_body(item.ident, decl, body, cx, sp, attr) {
-                Ok(body) => body,
-                Err(_) => return item.clone()
-            };
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
-        }
-        _ => {
-            cx.span_err(sp, "Postcondition on non-function item");
-            item.clone()
-        }
-    }
+    map_annotatble(cx, sp, attr, item, postcond_body, "Postcondition")
 }
 
 fn invariant(cx: &mut ExtCtxt,
              sp: Span,
              attr: &MetaItem,
-             item: P<Item>) -> P<Item> {
+             item: Annotatable)
+    -> Annotatable
+{
     inc_run_count();
-
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-            let body = match invariant_body(item.ident, decl, body, cx, sp, attr) {
-                Ok(body) => body,
-                Err(_) => return item.clone()
-            };
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
-        }
-        _ => {
-            cx.span_err(sp, "Invariant on non-function item");
-            item.clone()
-        }
-    }
+    map_annotatble(cx, sp, attr, item, invariant_body, "Invariant")
 }
 
 fn precond_body(ident: ast::Ident,
@@ -297,40 +263,27 @@ fn map_annotatble<F>(cx: &mut ExtCtxt,
     }
 }
 
-// TODO convert all these to use Annotatable
 fn debug_precond(cx: &mut ExtCtxt,
                  sp: Span,
                  attr: &MetaItem,
                  item: Annotatable) -> Annotatable {
-    if_debug_tmp(cx, |cx| precond(cx, sp, attr, item.clone()), item.clone())
+    if_debug(cx, |cx| precond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_postcond(cx: &mut ExtCtxt,
                   sp: Span,
                   attr: &MetaItem,
-                  item: P<Item>) -> P<Item> {
+                  item: Annotatable) -> Annotatable {
     if_debug(cx, |cx| postcond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_invariant(cx: &mut ExtCtxt,
                    sp: Span,
                    attr: &MetaItem,
-                   item: P<Item>) -> P<Item> {
+                   item: Annotatable) -> Annotatable {
     if_debug(cx, |cx| invariant(cx, sp, attr, item.clone()), item.clone())
 }
 
 // Executes f if we are compiling in debug mode, returns item otherwise.
-fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: P<Item>) -> P<Item>
-    where F: Fn(&mut ExtCtxt) -> P<Item>
-{
-    if !cx.cfg().iter().any(
-        |item| item.node == ast::MetaWord(token::get_name(token::intern("ndebug")))) {
-        f(cx)
-    } else {
-        item
-    }
-}
-
-// TODO remove
-fn if_debug_tmp<F>(cx: &mut ExtCtxt, f: F, item: Annotatable) -> Annotatable
+fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: Annotatable) -> Annotatable
     where F: Fn(&mut ExtCtxt) -> Annotatable
 {
     if !cx.cfg().iter().any(
