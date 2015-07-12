@@ -65,63 +65,7 @@ fn precond(cx: &mut ExtCtxt,
     -> Annotatable
 {
     inc_run_count();
-
-    match item {
-        Annotatable::Item(item) => {
-            match &item.node {
-                &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-                    match precond_body(item.ident, decl, body, cx, sp, attr) {
-                        Ok(body) => Annotatable::Item(P(Item { node: ast::ItemFn(decl.clone(),
-                                                                                 unsafety,
-                                                                                 constness,
-                                                                                 abi,
-                                                                                 generics.clone(),
-                                                                                 body),
-                                                               .. (*item).clone() })),
-                        Err(_) => Annotatable::Item(item.clone()),
-                    }
-                }
-                _ => {
-                    cx.span_err(sp, "Precondition on non-function item");
-                    Annotatable::Item(item.clone())
-                }
-            }
-        }
-        Annotatable::ImplItem(item) => {
-            match item.node {
-                ast::ImplItem_::MethodImplItem(ref sig, ref body) => {
-                    match precond_body(item.ident, &sig.decl, body, cx, sp, attr) {
-                        Ok(body) => Annotatable::ImplItem(P(ast::ImplItem {
-                            node: ast::ImplItem_::MethodImplItem(sig.clone(), body),
-                            .. (*item).clone()
-                        })),
-                        Err(_) => Annotatable::ImplItem(item.clone()),
-                    }
-                }
-                _ => {
-                    cx.span_err(sp, "Precondition on non-function impl item");
-                    Annotatable::ImplItem(item.clone())
-                }
-            }
-        }
-        Annotatable::TraitItem(item) => {
-            match item.node {
-                ast::TraitItem_::MethodTraitItem(ref sig, Some(ref body)) => {
-                    match precond_body(item.ident, &sig.decl, body, cx, sp, attr) {
-                        Ok(body) => Annotatable::TraitItem(P(ast::TraitItem {
-                            node: ast::TraitItem_::MethodTraitItem(sig.clone(), Some(body)),
-                            .. (*item).clone()
-                        })),
-                        Err(_) => Annotatable::TraitItem(item.clone()),
-                    }
-                }
-                _ => {
-                    cx.span_err(sp, "Precondition on non-function trait item");
-                    Annotatable::TraitItem(item.clone())
-                }
-            }
-        }
-    }
+    map_annotatble(cx, sp, attr, item, precond_body, "Precondition")
 }
 
 fn precond_body(ident: ast::Ident,
@@ -205,6 +149,7 @@ fn postcond(cx: &mut ExtCtxt,
     }
 }
 
+
 fn invariant(cx: &mut ExtCtxt,
              sp: Span,
              attr: &MetaItem,
@@ -251,6 +196,79 @@ fn invariant(cx: &mut ExtCtxt,
         _ => {
             cx.span_err(sp, "Invariant on non-function item");
             item.clone()
+        }
+    }
+}
+
+// Maps f over item, which must be a function-like item-like-thing.
+fn map_annotatble<F>(cx: &mut ExtCtxt,
+                     sp: Span,
+                     attr: &MetaItem,
+                     item: Annotatable,
+                     f: F,
+                     mapped_str: &str)
+    -> Annotatable
+    where F: Fn(ast::Ident,
+                &ast::FnDecl,
+                &ast::Block,
+                &mut ExtCtxt,
+                Span, &MetaItem)
+                -> Result<P<ast::Block>, ()>
+{
+    match item {
+        Annotatable::Item(item) => {
+            match &item.node {
+                &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
+                    match f(item.ident, decl, body, cx, sp, attr) {
+                        Ok(body) => Annotatable::Item(P(Item { node: ast::ItemFn(decl.clone(),
+                                                                                 unsafety,
+                                                                                 constness,
+                                                                                 abi,
+                                                                                 generics.clone(),
+                                                                                 body),
+                                                               .. (*item).clone() })),
+                        Err(_) => Annotatable::Item(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, &format!("{} on non-function item", mapped_str));
+                    Annotatable::Item(item.clone())
+                }
+            }
+        }
+        Annotatable::ImplItem(item) => {
+            match item.node {
+                ast::ImplItem_::MethodImplItem(ref sig, ref body) => {
+                    match f(item.ident, &sig.decl, body, cx, sp, attr) {
+                        Ok(body) => Annotatable::ImplItem(P(ast::ImplItem {
+                            node: ast::ImplItem_::MethodImplItem(sig.clone(), body),
+                            .. (*item).clone()
+                        })),
+                        Err(_) => Annotatable::ImplItem(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, &format!("{} on non-function impl item", mapped_str));
+                    Annotatable::ImplItem(item.clone())
+                }
+            }
+        }
+        Annotatable::TraitItem(item) => {
+            match item.node {
+                ast::TraitItem_::MethodTraitItem(ref sig, Some(ref body)) => {
+                    match f(item.ident, &sig.decl, body, cx, sp, attr) {
+                        Ok(body) => Annotatable::TraitItem(P(ast::TraitItem {
+                            node: ast::TraitItem_::MethodTraitItem(sig.clone(), Some(body)),
+                            .. (*item).clone()
+                        })),
+                        Err(_) => Annotatable::TraitItem(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, &format!("{} on non-function trait item", mapped_str));
+                    Annotatable::TraitItem(item.clone())
+                }
+            }
         }
     }
 }
