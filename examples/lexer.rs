@@ -61,7 +61,7 @@ struct Lexer {
     end: usize,
 }
 
-#[postcond="__result.start == __result.end"]
+#[postcond="return.start == return.end"]
 fn new_lexer(input: &'static str) -> Lexer {
     Lexer {
         input: input,

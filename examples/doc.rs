@@ -15,7 +15,7 @@
 // Examples from readme.md
 
 #[precond="x > 0"]
-#[postcond="__result > 1"]
+#[postcond="return > 1"]
 fn foo(x: i64) -> i64 {
     let y = 45 / x;
     y + 1

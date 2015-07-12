@@ -1,6 +1,13 @@
 language: rust
+rust:
+ - nightly
+
 script:
-- cargo build --verbose
+ - cargo build --verbose
+ - cargo test
+
+sudo: false
+
 notifications:
   email:
     on_success: never

@@ -1,4 +1,4 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -17,176 +17,245 @@ extern crate syntax;
 
 use syntax::ast;
 use syntax::ast::{Item, MetaItem};
-use syntax::codemap::{Span,Spanned};
-use syntax::ext::base::{ExtCtxt, Modifier};
-use syntax::ext::quote::rt::ExtParseUtils;
+use syntax::codemap::{self, Span};
+use syntax::ext::base::{ExtCtxt, MultiModifier, Annotatable};
+use syntax::ext::quote::rt::{ExtParseUtils, ToTokens};
+use syntax::ext::build::AstBuilder;
+use syntax::fold::{Folder, noop_fold_expr, noop_fold_mac};
 use syntax::parse::token;
 use syntax::ptr::P;
+use syntax::util::small_vector::SmallVector;
 use rustc::plugin::Registry;
+
+// Assuming this is going to be Ok because syntax extensions can't be used
+// concurrently. What could go wrong?
+static mut RUN_COUNT: u32 = 0;
+
+fn inc_run_count() {
+    unsafe {
+        RUN_COUNT += 1;
+    }
+}
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_syntax_extension(token::intern("precond"),
-                                  Modifier(Box::new(precond)));
+                                  MultiModifier(Box::new(precond)));
     reg.register_syntax_extension(token::intern("postcond"),
-                                  Modifier(Box::new(postcond)));
+                                  MultiModifier(Box::new(postcond)));
     reg.register_syntax_extension(token::intern("invariant"),
-                                  Modifier(Box::new(invariant)));
+                                  MultiModifier(Box::new(invariant)));
     reg.register_syntax_extension(token::intern("debug_precond"),
-                                  Modifier(Box::new(debug_precond)));
+                                  MultiModifier(Box::new(debug_precond)));
     reg.register_syntax_extension(token::intern("debug_postcond"),
-                                  Modifier(Box::new(debug_postcond)));
+                                  MultiModifier(Box::new(debug_postcond)));
     reg.register_syntax_extension(token::intern("debug_invariant"),
-                                  Modifier(Box::new(debug_invariant)));
+                                  MultiModifier(Box::new(debug_invariant)));
 }
 
 fn precond(cx: &mut ExtCtxt,
            sp: Span,
            attr: &MetaItem,
-           item: P<Item>) -> P<Item> {
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
-            // Parse out the predicate supplied to the syntax extension.
-            let pred = match make_predicate(cx, sp, attr, "precond") {
-                Some(pred) => pred,
-                None => return item.clone()
-            };
-            let pred_str = &pred;
-            let pred = cx.parse_expr(pred_str.to_string());
-
-            // Construct the wrapper function.
-            let fn_name = token::get_ident(item.ident);
-
-            let mut stmts = Vec::new();
-            stmts.push(assert(&*cx, "precondition of", &fn_name, pred.clone(), pred_str));
-
-            let fn_name = ast::Ident::new(token::intern(&format!("__inner_fn_{}", fn_name)));
-            // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
-            stmts.push(fn_decl(sp, fn_name, inner_item));
-
-            // Construct the function call.
-            let args = match args(cx, &**decl, sp) {
-                Some(args) => args,
-                None => { return item.clone(); }
-            };
-            let ty_args = ty_args(generics, sp);
-            stmts.push(assign_expr(&*cx, fn_name, args, ty_args));
-
-            let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
-        }
-        _ => {
-            cx.span_err(sp, "Precondition on non-function item");
-            item.clone()
-        }
-    }
+           item: Annotatable)
+    -> Annotatable
+{
+    inc_run_count();
+    map_annotatble(cx, sp, attr, item, Contract::Precond)
 }
 
 fn postcond(cx: &mut ExtCtxt,
             sp: Span,
             attr: &MetaItem,
-            item: P<Item>) -> P<Item> {
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
-            // Parse out the predicate supplied to the syntax extension.
-            let pred = match make_predicate(cx, sp, attr, "postcond") {
-                Some(pred) => pred,
-                None => return item.clone()
-            };
-            let pred_str = &pred;
-            // Rename `return` to `__result`
-            let pred_str = pred_str.replace("return", "__result");
-            let pred = cx.parse_expr(pred_str.clone());
-
-            // Construct the wrapper function.
-            let fn_name = token::get_ident(item.ident);
-
-            let mut stmts = Vec::new();
-            let fn_ident = ast::Ident::new(token::intern(&format!("__inner_{}", fn_name)));
-            // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
-            stmts.push(fn_decl(sp, fn_ident, inner_item));
-
-            // Construct the function call.
-            let args = match args(cx, &**decl, sp) {
-                Some(args) => args,
-                None => { return item.clone(); }
-            };
-            let ty_args = ty_args(generics, sp);
-            stmts.push(assign_expr(&*cx, fn_ident, args, ty_args));
-
-            stmts.push(assert(&*cx, "postcondition of", &fn_name, pred, &pred_str[..]));
-
-            let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
-        }
-        _ => {
-            cx.span_err(sp, "Postcondition on non-function item");
-            item.clone()
-        }
-    }
+            item: Annotatable)
+    -> Annotatable
+{
+    inc_run_count();
+    map_annotatble(cx, sp, attr, item, Contract::Postcond)
 }
 
 fn invariant(cx: &mut ExtCtxt,
              sp: Span,
              attr: &MetaItem,
-             item: P<Item>) -> P<Item> {
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, _) => {
-            // Parse out the predicate supplied to the syntax extension.
-            let pred = match make_predicate(cx, sp, attr, "invariant") {
-                Some(pred) => pred,
-                None => return item.clone()
-            };
-            let pred_str = &pred;
-            let pred = cx.parse_expr(pred_str.to_string());
+             item: Annotatable)
+    -> Annotatable
+{
+    inc_run_count();
+    map_annotatble(cx, sp, attr, item, Contract::Invariant)
+}
 
-            // Construct the wrapper function.
-            let fn_name = token::get_ident(item.ident);
 
-            let mut stmts = Vec::new();
-            stmts.push(assert(&*cx, "invariant entering", &fn_name, pred.clone(), pred_str));
+fn contract_body(ident: ast::Ident,
+                 decl: &ast::FnDecl,
+                 body: &ast::Block,
+                 cx: &mut ExtCtxt,
+                 sp: Span,
+                 attr: &MetaItem,
+                 contract: Contract)
+    -> Result<P<ast::Block>, ()>
+{
+    // Parse out the predicate supplied to the syntax extension.
+    let pred = try!(make_predicate(cx, sp, attr, contract.short_str()));
+    let mut pred_str = pred.to_string();
 
-            let fn_ident = ast::Ident::new(token::intern(&format!("__inner_{}", fn_name)));
-            // Construct the inner function.
-            let inner_item = P(Item { attrs: Vec::new(), vis: ast::Inherited, .. (*item).clone() });
-            stmts.push(fn_decl(sp, fn_ident, inner_item));
+    // Rename `return` to `__result`
+    let result_name = result_name();
+    if contract.checks_return() {
+        pred_str = pred_str.replace("return", &token::get_ident(result_name));
+    }
 
-            // Construct the function call.
-            let args = match args(cx, &**decl, sp) {
-                Some(args) => args,
-                None => { return item.clone(); }
-            };
-            let ty_args = ty_args(generics, sp);
-            stmts.push(assign_expr(&*cx, fn_ident, args, ty_args));
+    let pred = cx.parse_expr(pred_str.clone());
 
-            stmts.push(assert(&*cx, "invariant leaving", &fn_name, pred, pred_str));
+    // Construct the new function.
+    let fn_name = token::get_ident(ident);
 
-            let body = fn_body(cx, stmts, sp);
-            P(Item { node: ast::ItemFn(decl.clone(),
-                                       unsafety,
-                                       constness,
-                                       abi,
-                                       generics.clone(),
-                                       body),
-                     .. (*item).clone() })
+    let mut stmts = Vec::new();
+
+    // Check precondition.
+    if contract.has_precond() {
+        stmts.push(assert(cx, contract.pre_str(), &fn_name, pred.clone(), &pred_str));
+    }
+
+    let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
+    stmts.push(init_stmt);
+
+    stmts.push(make_body(cx, (*body).clone(), sp, &decl.output));
+
+    let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
+    stmts.push(unwrap);
+
+    // Check postcondition.
+    if contract.has_postcond() {
+        stmts.push(assert(cx, contract.post_str(), &fn_name, pred, &pred_str));
+    }
+
+    Ok(fn_body(cx, stmts, sp))
+}
+
+enum Contract {
+    Precond,
+    Postcond,
+    Invariant,
+}
+
+impl Contract {
+    fn short_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => "precond",
+            &Contract::Postcond => "postcond",
+            &Contract::Invariant => "invariant",
         }
-        _ => {
-            cx.span_err(sp, "Invariant on non-function item");
-            item.clone()
+    }
+
+    fn long_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => "Precondition",
+            &Contract::Postcond => "Postcondition",
+            &Contract::Invariant => "Invariant",
+        }
+    }
+
+    fn pre_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => "precondition of",
+            &Contract::Postcond => panic!(),
+            &Contract::Invariant => "invariant entering",
+        }
+    }
+
+    fn post_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => panic!(),
+            &Contract::Postcond => "postcondition of",
+            &Contract::Invariant => "invariant leaving",
+        }
+    }
+
+    fn has_precond(&self) -> bool {
+        match self {
+            &Contract::Precond => true,
+            &Contract::Postcond => false,
+            &Contract::Invariant => true,
+        }
+    }
+
+    fn has_postcond(&self) -> bool {
+        match self {
+            &Contract::Precond => false,
+            &Contract::Postcond => true,
+            &Contract::Invariant => true,
+        }
+    }
+
+    fn checks_return(&self) -> bool {
+        match self {
+            &Contract::Postcond => true,
+            _ => false,
+        }
+    }
+}
+
+// Maps contract_body over item, which must be a function-like item-like-thing.
+fn map_annotatble(cx: &mut ExtCtxt,
+                  sp: Span,
+                  attr: &MetaItem,
+                  item: Annotatable,
+                  contract: Contract)
+    -> Annotatable
+{
+    match item {
+        Annotatable::Item(item) => {
+            match &item.node {
+                &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
+                    match contract_body(item.ident, decl, body, cx, sp, attr, contract) {
+                        Ok(body) => Annotatable::Item(P(Item { node: ast::ItemFn(decl.clone(),
+                                                                                 unsafety,
+                                                                                 constness,
+                                                                                 abi,
+                                                                                 generics.clone(),
+                                                                                 body),
+                                                               .. (*item).clone() })),
+                        Err(_) => Annotatable::Item(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, &format!("{} on non-function item", contract.long_str()));
+                    Annotatable::Item(item.clone())
+                }
+            }
+        }
+        Annotatable::ImplItem(item) => {
+            match item.node {
+                ast::ImplItem_::MethodImplItem(ref sig, ref body) => {
+                    match contract_body(item.ident, &sig.decl, body, cx, sp, attr, contract) {
+                        Ok(body) => Annotatable::ImplItem(P(ast::ImplItem {
+                            node: ast::ImplItem_::MethodImplItem(sig.clone(), body),
+                            .. (*item).clone()
+                        })),
+                        Err(_) => Annotatable::ImplItem(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, &format!("{} on non-function impl item", contract.long_str()));
+                    Annotatable::ImplItem(item.clone())
+                }
+            }
+        }
+        Annotatable::TraitItem(item) => {
+            match item.node {
+                ast::TraitItem_::MethodTraitItem(ref sig, Some(ref body)) => {
+                    match contract_body(item.ident, &sig.decl, body, cx, sp, attr, contract) {
+                        Ok(body) => Annotatable::TraitItem(P(ast::TraitItem {
+                            node: ast::TraitItem_::MethodTraitItem(sig.clone(), Some(body)),
+                            .. (*item).clone()
+                        })),
+                        Err(_) => Annotatable::TraitItem(item.clone()),
+                    }
+                }
+                _ => {
+                    cx.span_err(sp, &format!("{} on non-function trait item", contract.long_str()));
+                    Annotatable::TraitItem(item.clone())
+                }
+            }
         }
     }
 }
@@ -194,25 +263,26 @@ fn invariant(cx: &mut ExtCtxt,
 fn debug_precond(cx: &mut ExtCtxt,
                  sp: Span,
                  attr: &MetaItem,
-                 item: P<Item>) -> P<Item> {
+                 item: Annotatable) -> Annotatable {
     if_debug(cx, |cx| precond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_postcond(cx: &mut ExtCtxt,
                   sp: Span,
                   attr: &MetaItem,
-                  item: P<Item>) -> P<Item> {
+                  item: Annotatable) -> Annotatable {
     if_debug(cx, |cx| postcond(cx, sp, attr, item.clone()), item.clone())
 }
 fn debug_invariant(cx: &mut ExtCtxt,
                    sp: Span,
                    attr: &MetaItem,
-                   item: P<Item>) -> P<Item> {
+                   item: Annotatable) -> Annotatable {
     if_debug(cx, |cx| invariant(cx, sp, attr, item.clone()), item.clone())
 }
 
 // Executes f if we are compiling in debug mode, returns item otherwise.
-fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: P<Item>) -> P<Item>
-    where F: Fn(&mut ExtCtxt) -> P<Item> {
+fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: Annotatable) -> Annotatable
+    where F: Fn(&mut ExtCtxt) -> Annotatable
+{
     if !cx.cfg().iter().any(
         |item| item.node == ast::MetaWord(token::get_name(token::intern("ndebug")))) {
         f(cx)
@@ -226,7 +296,7 @@ fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: P<Item>) -> P<Item>
 fn make_predicate(cx: &ExtCtxt,
                   sp: Span,
                   attr: &MetaItem,
-                  cond_name: &str) -> Option<token::InternedString> {
+                  cond_name: &str) -> Result<token::InternedString, ()> {
     fn debug_name(cond_name: &str) -> String {
         let mut result = "debug_".to_string();
         result.push_str(cond_name);
@@ -239,21 +309,21 @@ fn make_predicate(cx: &ExtCtxt,
                name == &token::get_name(token::intern(&debug_name(cond_name)[..])) {
                 match &lit.node {
                     &ast::LitStr(ref lit, _) => {
-                        Some(lit.clone())
+                        Ok(lit.clone())
                     }
                     _ => {
                         cx.span_err(sp, "unexpected kind of predicate for condition");
-                        None
+                        Err(())
                     }
                 }
             } else {
                 cx.span_err(sp, &format!("unexpected name in condition: {}", name)[..]);
-                None
+                Err(())
             }
         },
         _ => {
             cx.span_err(sp, "unexpected format of condition");
-            None
+            Err(())
         }
     }
 }
@@ -265,86 +335,10 @@ fn assert(cx: &ExtCtxt,
           fn_name: &token::InternedString,
           pred: P<ast::Expr>,
           pred_str: &str) -> P<ast::Stmt> {
-    let label = format!("\"{} {} ({})\"", cond_type, fn_name,
+    let label = format!("{} {} ({})", cond_type, fn_name,
                         pred_str.replace("\"", "\\\""));
-    let label = cx.parse_expr(label);
-    quote_stmt!(&*cx, assert!($pred, $label);).unwrap()
-}
-
-// Check that a pattern can trivially be used to instantiate that pattern.
-// For example if we have `fn foo((x, y): ...) {...}` we can call `foo((x, y))`
-// (assuming x and y are in scope and have the correct type) with the exact same
-// syntax as the pattern is declared. But if the pattern is `z @ (x,y)` we cannot
-// (we need to use `(x, y)`).
-//
-// Ideally we would just translate the pattern to the correct one. But for now
-// we just check if we can skip the translation phase and fail otherwise (FIXME).
-fn is_sane_pattern(pat: &ast::Pat) -> bool {
-    match &pat.node {
-        &ast::PatWild(_) | &ast::PatMac(_) | &ast::PatStruct(..) |
-        &ast::PatLit(_) | &ast::PatRange(..) | &ast::PatVec(..) |
-        &ast::PatQPath(..) => false,
-        &ast::PatIdent(ast::BindByValue(ast::MutImmutable), _, _) => true,
-        &ast::PatIdent(..) => false,
-        &ast::PatEnum(_, Some(ref ps)) | &ast::PatTup(ref ps) =>
-            ps.iter().all(|p| is_sane_pattern(p)),
-        &ast::PatEnum(..) => false,
-        &ast::PatBox(ref p) | &ast::PatRegion(ref p, _) => is_sane_pattern(p)
-    }
-}
-
-fn args(cx: &ExtCtxt, decl: &ast::FnDecl, sp: Span) -> Option<Vec<ast::TokenTree>> {
-    if !decl.inputs.iter().map(|a| &*a.pat).all(is_sane_pattern) {
-        return None;
-    }
-
-    let cm = &cx.parse_sess.span_diagnostic.cm;
-    Some(decl.inputs
-        .iter()
-        // span_to_snippet really shouldn't return None, so I hope the
-        // unwrap is OK. Not sure we can do anything it is does in any case.
-        .map(|a| cx.parse_tts(cm.span_to_snippet(a.pat.span).unwrap()))
-        .collect::<Vec<_>>()
-        .connect(&ast::TtToken(sp, token::Comma)))
-}
-
-fn ty_args(generics: &ast::Generics, sp: Span) -> Vec<ast::TokenTree> {
-    generics.ty_params
-        .iter()
-        .map(|tp| tp.ident)
-        .map(|ident| vec![token::Ident(ident, token::Plain)])
-        .collect::<Vec<_>>()
-        .connect(&token::Comma)
-        .into_iter()
-        .map(|t| ast::TtToken(sp, t))
-        .collect()
-}
-
-// Creates the inner function, which is the original item (which must be an
-// ast::ItemFn) with the new name fn_name.
-fn fn_decl(sp: Span,
-           fn_name: ast::Ident,
-           item: P<Item>) -> P<ast::Stmt> {
-    match &item.node {
-        &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-            let inner = Item {
-                ident: fn_name,
-                node: ast::ItemFn(decl.clone(),
-                                  unsafety,
-                                  constness,
-                                  abi,
-                                  generics.clone(),
-                                  body.clone()),
-                .. (*item).clone() };
-
-            let inner = ast::DeclItem(P(inner));
-            let inner = P(Spanned{ node: inner, span: sp });
-
-            let stmt = ast::StmtDecl(inner, ast::DUMMY_NODE_ID);
-            P(Spanned{ node: stmt, span: sp })
-        }
-        _ => panic!("This should be checked by the caller")
-    }
+    let label = &label;
+    quote_stmt!(cx, assert!($pred, $label);).unwrap()
 }
 
 fn fn_body(cx: &ExtCtxt,
@@ -352,25 +346,139 @@ fn fn_body(cx: &ExtCtxt,
            sp: Span) -> P<ast::Block> {
     P(ast::Block {
         stmts: stmts,
-        expr: Some(result_expr(&*cx)),
+        expr: Some(result_expr(cx)),
         id: ast::DUMMY_NODE_ID,
         rules: ast::DefaultBlock,
         span: sp
     })
 }
 
-fn assign_expr(cx: &ExtCtxt,
-               fn_name: ast::Ident,
-               arg_toks: Vec<ast::TokenTree>,
-               ty_arg_toks: Vec<ast::TokenTree>) -> P<ast::Stmt> {
-    if ty_arg_toks.len() > 0 {
-        quote_stmt!(cx, let __result = $fn_name::<$ty_arg_toks>($arg_toks);).unwrap()
-    } else {
-        quote_stmt!(cx, let __result = $fn_name($arg_toks);).unwrap()
+// The return expr for our wrapper function, just returns __result.
+fn result_expr(cx: &ExtCtxt) -> P<ast::Expr> {
+    let result_name = result_name();
+    quote_expr!(cx, $result_name)
+}
+
+fn result_name() -> ast::Ident {
+    unsafe {
+        ast::Ident::new(token::intern(&format!("__result_{}", RUN_COUNT)))
     }
 }
 
-// The return expr for our wrapper function, just returns __result.
-fn result_expr(cx: &ExtCtxt) -> P<ast::Expr> {
-    quote_expr!(cx, __result)
+fn loop_label() -> ast::Ident {
+    unsafe {
+        ast::Ident::new(token::intern(&format!("'__hoare_{}", RUN_COUNT)))
+    }
 }
+
+fn make_body(cx: &ExtCtxt,
+             mut body: ast::Block,
+             sp: Span,
+             ret: &ast::FunctionRetTy)
+    -> P<ast::Stmt>
+{
+    // Fold return expressions into breaks.
+    body.stmts = fold_stmts(cx, &body.stmts);
+
+    let loop_label = loop_label();
+
+    // Turn the optional returned expression into an assignment
+    // into __result and a break.
+    body.stmts.extend(terminate_loop(cx, &body.expr, ret).into_iter());
+    // FIXME Sometimes (e.g., after a return which was converted to a break) this
+    // is not necessary, it will then produce unreachable code warnings. Would
+    // be better not to generate this code then.
+    body.stmts.push(cx.stmt_expr(cx.expr(codemap::DUMMY_SP, ast::Expr_::ExprBreak(Some(loop_label)))));
+    body.expr = None;
+
+    cx.stmt_expr(cx.expr(sp, ast::Expr_::ExprLoop(P(body), Some(loop_label))))
+}
+
+fn terminate_loop(cx: &ExtCtxt,
+                  expr: &Option<P<ast::Expr>>,
+                  ret: &ast::FunctionRetTy)
+    -> Option<P<ast::Stmt>>
+{
+    let result_name = result_name();
+    match expr {
+        &Some(ref expr) => {
+            let expr = expr.clone();
+            quote_stmt!(cx, $result_name = Some($expr))
+        }
+        &None if is_void(ret) => quote_stmt!(cx, $result_name = Some(())),
+        _ => None,
+    }
+}
+
+fn is_void(ret: &ast::FunctionRetTy) -> bool {
+    match ret {
+        &ast::FunctionRetTy::NoReturn(_) => true,
+        &ast::FunctionRetTy::DefaultReturn(_) => true,
+        &ast::FunctionRetTy::Return(ref ty) => {
+            if let ast::Ty_::TyTup(ref tys) = ty.node {
+                tys.len() == 0
+            } else {
+                false
+            }
+        }
+    }
+}
+
+
+// These folding functions walk the AST replacing any returns with breaks.
+fn fold_stmts(cx: &ExtCtxt, stmts: &[P<ast::Stmt>]) -> Vec<P<ast::Stmt>> {
+    let mut result = Vec::new();
+    for s in stmts {
+        result.extend(fold_stmt(cx, s.clone()).into_iter());
+    }
+    result
+}
+
+fn fold_stmt(cx: &ExtCtxt, stmt: P<ast::Stmt>) -> SmallVector<P<ast::Stmt>> {
+    let mut ret = ReturnFolder { cx: cx };
+
+    ret.fold_stmt(stmt)
+}
+
+struct ReturnFolder<'a, 'b: 'a> {
+    cx: &'a ExtCtxt<'b>,
+}
+
+impl<'a, 'b> Folder for ReturnFolder<'a, 'b> {
+    fn fold_expr(&mut self, e: P<ast::Expr>) -> P<ast::Expr> {
+        let result_name = result_name();
+        let loop_label = loop_label();
+        match e.node {
+            ast::Expr_::ExprRet(Some(ref expr)) => {
+                // We should really fold expr here, but you'd have to be pretty
+                // pathalogical to embed a return inside a return.
+                let expr = expr.clone();
+                // FIXME(#26994) broken quasi-quoting.
+                // return quote_expr!(self.cx, { $result_name = Some($expr); break $loop_label; });
+                let stmts = vec![quote_stmt!(self.cx, $result_name = Some($expr);).unwrap(),
+                                 self.cx.stmt_expr(
+                                    self.cx.expr(codemap::DUMMY_SP,
+                                        ast::Expr_::ExprBreak(Some(loop_label))))];
+                let expr = self.cx.expr_block(self.cx.block(stmts[0].span, stmts, None));
+                return expr;
+            }
+            ast::Expr_::ExprRet(None) => {
+                // FIXME(#26994) broken quasi-quoting.
+                // return quote_expr!(self.cx, { $result_name = Some(()); break $loop_label; });
+                let stmts = vec![quote_stmt!(self.cx, $result_name = Some(());).unwrap(),
+                                 self.cx.stmt_expr(
+                                    self.cx.expr(codemap::DUMMY_SP,
+                                        ast::Expr_::ExprBreak(Some(loop_label))))];
+                let expr = self.cx.expr_block(self.cx.block(stmts[0].span, stmts, None));
+                return expr;
+            }
+            _ => {}
+        }
+        e.map(|e| noop_fold_expr(e, self))
+    }
+
+    fn fold_mac(&mut self, mac: ast::Mac) -> ast::Mac {
+        noop_fold_mac(mac, self)
+    }
+}
+
