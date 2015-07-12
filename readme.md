@@ -83,6 +83,10 @@ fn main() {
 }
 ```
 
+You can use contracts on methods as well as functions, but they are not as well
+tested.
+
+
 ## Contents
 
 All the code for checking conditions is in `libhoare`. Currently, there is only
@@ -129,20 +133,17 @@ to build libhoare. Examples are created in `../obj`
 
 ## TODO
 
-* cargo support (building works, would be nice to have tests support)
 * add tests to RustCI
 * tests for debug_ versions of macros - what is the best way to test this?
 * better use of macro stuff? (I'm a total beginner at syntax extensions, this all
 could probably be implemented better).
-* better spans? (I'm not sure if I'm doing the span-stuff correctly).
+* better spans.
 * better names for scopes (`<precondition>` rather than `<quote expansion>`, etc.
 These appear in the user-visible error messages, so it would be nice if they could
 be informative).
 
 Wish list:
 
-* work on methods as well as functions (requires changes to Rust compiler so that
- syntax extensions can be placed on methods as well as functions),
 * object invariants (I think this would need compiler support, if it is possible
 at all. You would add `[#invariant="..."]` to a struct, enum, etc. and the
 invariant would be checked on entering and leaving every method defined in any
