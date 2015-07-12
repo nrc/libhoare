@@ -12,11 +12,6 @@
 
 #![feature(plugin_registrar, quote, rustc_private)]
 
-// TODO refactor *_body functions
-// TODO weed out DUMMY_SPs
-// TODO tests for method preconds, postconds, invariants
-// TODO fixup egs and tests, inline TODOs
-
 extern crate rustc;
 extern crate syntax;
 
@@ -65,7 +60,7 @@ fn precond(cx: &mut ExtCtxt,
     -> Annotatable
 {
     inc_run_count();
-    map_annotatble(cx, sp, attr, item, precond_body, "Precondition")
+    map_annotatble(cx, sp, attr, item, Contract::Precond)
 }
 
 fn postcond(cx: &mut ExtCtxt,
@@ -75,7 +70,7 @@ fn postcond(cx: &mut ExtCtxt,
     -> Annotatable
 {
     inc_run_count();
-    map_annotatble(cx, sp, attr, item, postcond_body, "Postcondition")
+    map_annotatble(cx, sp, attr, item, Contract::Postcond)
 }
 
 fn invariant(cx: &mut ExtCtxt,
@@ -85,95 +80,40 @@ fn invariant(cx: &mut ExtCtxt,
     -> Annotatable
 {
     inc_run_count();
-    map_annotatble(cx, sp, attr, item, invariant_body, "Invariant")
+    map_annotatble(cx, sp, attr, item, Contract::Invariant)
 }
 
-fn precond_body(ident: ast::Ident,
-                decl: &ast::FnDecl,
-                body: &ast::Block,
-                cx: &mut ExtCtxt,
-                sp: Span,
-                attr: &MetaItem)
-    -> Result<P<ast::Block>, ()>
-{
-    // Parse out the predicate supplied to the syntax extension.
-    let pred = try!(make_predicate(cx, sp, attr, "precond"));
-    let pred_str = &pred;
-    let pred = cx.parse_expr(pred_str.to_string());
 
-    // Construct the mew function.
-    let fn_name = token::get_ident(ident);
-    let result_name = result_name();
-
-    let mut stmts = Vec::new();
-    stmts.push(assert(cx, "precondition of", &fn_name, pred.clone(), pred_str));
-
-    let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
-    stmts.push(init_stmt);
-
-    stmts.push(make_body(cx, (*body).clone(), sp, &decl.output));
-
-    let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
-    stmts.push(unwrap);
-
-    Ok(fn_body(cx, stmts, sp))
-}
-
-fn postcond_body(ident: ast::Ident,
+fn contract_body(ident: ast::Ident,
                  decl: &ast::FnDecl,
                  body: &ast::Block,
                  cx: &mut ExtCtxt,
                  sp: Span,
-                 attr: &MetaItem)
+                 attr: &MetaItem,
+                 contract: Contract)
     -> Result<P<ast::Block>, ()>
 {
     // Parse out the predicate supplied to the syntax extension.
-    let pred = try!(make_predicate(cx, sp, attr, "postcond"));
-    let pred_str = &pred;
-
-    let result_name = result_name();
+    let pred = try!(make_predicate(cx, sp, attr, contract.short_str()));
+    let mut pred_str = pred.to_string();
 
     // Rename `return` to `__result`
-    let pred_str = pred_str.replace("return", &token::get_ident(result_name));
+    let result_name = result_name();
+    if contract.checks_return() {
+        pred_str = pred_str.replace("return", &token::get_ident(result_name));
+    }
+
     let pred = cx.parse_expr(pred_str.clone());
 
     // Construct the new function.
     let fn_name = token::get_ident(ident);
-    let mut stmts = Vec::new();
-
-    let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
-    stmts.push(init_stmt);
-
-    stmts.push(make_body(cx, (*body).clone(), sp, &decl.output));
-
-    let unwrap = quote_stmt!(cx, let $result_name = $result_name.unwrap();).unwrap();
-    stmts.push(unwrap);
-
-    // Check the postcondition.
-    stmts.push(assert(cx, "postcondition of", &fn_name, pred, &pred_str));
-
-    Ok(fn_body(cx, stmts, sp))
-}
-
-fn invariant_body(ident: ast::Ident,
-                  decl: &ast::FnDecl,
-                  body: &ast::Block,
-                  cx: &mut ExtCtxt,
-                  sp: Span,
-                  attr: &MetaItem)
-    -> Result<P<ast::Block>, ()>
-{
-    // Parse out the predicate supplied to the syntax extension.
-    let pred = try!(make_predicate(cx, sp, attr, "invariant"));
-    let pred_str = &pred;
-    let pred = cx.parse_expr(pred_str.to_string());
-
-    // Construct the new function.
-    let fn_name = token::get_ident(ident);
-    let result_name = result_name();
 
     let mut stmts = Vec::new();
-    stmts.push(assert(cx, "invariant entering", &fn_name, pred.clone(), pred_str));
+
+    // Check precondition.
+    if contract.has_precond() {
+        stmts.push(assert(cx, contract.pre_str(), &fn_name, pred.clone(), &pred_str));
+    }
 
     let init_stmt = quote_stmt!(cx, let mut $result_name = None;).unwrap();
     stmts.push(init_stmt);
@@ -184,32 +124,89 @@ fn invariant_body(ident: ast::Ident,
     stmts.push(unwrap);
 
     // Check postcondition.
-    stmts.push(assert(cx, "invariant leaving", &fn_name, pred, pred_str));
+    if contract.has_postcond() {
+        stmts.push(assert(cx, contract.post_str(), &fn_name, pred, &pred_str));
+    }
 
     Ok(fn_body(cx, stmts, sp))
 }
 
+enum Contract {
+    Precond,
+    Postcond,
+    Invariant,
+}
 
-// Maps f over item, which must be a function-like item-like-thing.
-fn map_annotatble<F>(cx: &mut ExtCtxt,
-                     sp: Span,
-                     attr: &MetaItem,
-                     item: Annotatable,
-                     f: F,
-                     mapped_str: &str)
+impl Contract {
+    fn short_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => "precond",
+            &Contract::Postcond => "postcond",
+            &Contract::Invariant => "invariant",
+        }
+    }
+
+    fn long_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => "Precondition",
+            &Contract::Postcond => "Postcondition",
+            &Contract::Invariant => "Invariant",
+        }
+    }
+
+    fn pre_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => "precondition of",
+            &Contract::Postcond => panic!(),
+            &Contract::Invariant => "invariant entering",
+        }
+    }
+
+    fn post_str(&self) -> &'static str {
+        match self {
+            &Contract::Precond => panic!(),
+            &Contract::Postcond => "postcondition of",
+            &Contract::Invariant => "invariant leaving",
+        }
+    }
+
+    fn has_precond(&self) -> bool {
+        match self {
+            &Contract::Precond => true,
+            &Contract::Postcond => false,
+            &Contract::Invariant => true,
+        }
+    }
+
+    fn has_postcond(&self) -> bool {
+        match self {
+            &Contract::Precond => false,
+            &Contract::Postcond => true,
+            &Contract::Invariant => true,
+        }
+    }
+
+    fn checks_return(&self) -> bool {
+        match self {
+            &Contract::Postcond => true,
+            _ => false,
+        }
+    }
+}
+
+// Maps contract_body over item, which must be a function-like item-like-thing.
+fn map_annotatble(cx: &mut ExtCtxt,
+                  sp: Span,
+                  attr: &MetaItem,
+                  item: Annotatable,
+                  contract: Contract)
     -> Annotatable
-    where F: Fn(ast::Ident,
-                &ast::FnDecl,
-                &ast::Block,
-                &mut ExtCtxt,
-                Span, &MetaItem)
-                -> Result<P<ast::Block>, ()>
 {
     match item {
         Annotatable::Item(item) => {
             match &item.node {
                 &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
-                    match f(item.ident, decl, body, cx, sp, attr) {
+                    match contract_body(item.ident, decl, body, cx, sp, attr, contract) {
                         Ok(body) => Annotatable::Item(P(Item { node: ast::ItemFn(decl.clone(),
                                                                                  unsafety,
                                                                                  constness,
@@ -221,7 +218,7 @@ fn map_annotatble<F>(cx: &mut ExtCtxt,
                     }
                 }
                 _ => {
-                    cx.span_err(sp, &format!("{} on non-function item", mapped_str));
+                    cx.span_err(sp, &format!("{} on non-function item", contract.long_str()));
                     Annotatable::Item(item.clone())
                 }
             }
@@ -229,7 +226,7 @@ fn map_annotatble<F>(cx: &mut ExtCtxt,
         Annotatable::ImplItem(item) => {
             match item.node {
                 ast::ImplItem_::MethodImplItem(ref sig, ref body) => {
-                    match f(item.ident, &sig.decl, body, cx, sp, attr) {
+                    match contract_body(item.ident, &sig.decl, body, cx, sp, attr, contract) {
                         Ok(body) => Annotatable::ImplItem(P(ast::ImplItem {
                             node: ast::ImplItem_::MethodImplItem(sig.clone(), body),
                             .. (*item).clone()
@@ -238,7 +235,7 @@ fn map_annotatble<F>(cx: &mut ExtCtxt,
                     }
                 }
                 _ => {
-                    cx.span_err(sp, &format!("{} on non-function impl item", mapped_str));
+                    cx.span_err(sp, &format!("{} on non-function impl item", contract.long_str()));
                     Annotatable::ImplItem(item.clone())
                 }
             }
@@ -246,7 +243,7 @@ fn map_annotatble<F>(cx: &mut ExtCtxt,
         Annotatable::TraitItem(item) => {
             match item.node {
                 ast::TraitItem_::MethodTraitItem(ref sig, Some(ref body)) => {
-                    match f(item.ident, &sig.decl, body, cx, sp, attr) {
+                    match contract_body(item.ident, &sig.decl, body, cx, sp, attr, contract) {
                         Ok(body) => Annotatable::TraitItem(P(ast::TraitItem {
                             node: ast::TraitItem_::MethodTraitItem(sig.clone(), Some(body)),
                             .. (*item).clone()
@@ -255,7 +252,7 @@ fn map_annotatble<F>(cx: &mut ExtCtxt,
                     }
                 }
                 _ => {
-                    cx.span_err(sp, &format!("{} on non-function trait item", mapped_str));
+                    cx.span_err(sp, &format!("{} on non-function trait item", contract.long_str()));
                     Annotatable::TraitItem(item.clone())
                 }
             }
