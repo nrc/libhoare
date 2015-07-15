@@ -11,8 +11,7 @@
 // These tests should all fail to compile, but should not ICE or give
 // unreasonable error messages.
 
-#![feature(plugin)]
-
+#![feature(plugin, custom_attribute)]
 #![plugin(hoare)]
 
 #[precond=""]
