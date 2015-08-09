@@ -100,13 +100,13 @@ fn contract_body(ident: ast::Ident,
     // Rename `return` to `__result`
     let result_name = result_name();
     if contract.checks_return() {
-        pred_str = pred_str.replace("return", &token::get_ident(result_name));
+        pred_str = pred_str.replace("return", &result_name.to_string());
     }
 
     let pred = cx.parse_expr(pred_str.clone());
 
     // Construct the new function.
-    let fn_name = token::get_ident(ident);
+    let fn_name = ident.name.as_str();
 
     let mut stmts = Vec::new();
 
@@ -304,8 +304,8 @@ fn make_predicate(cx: &ExtCtxt,
 
     match &attr.node {
         &ast::MetaNameValue(ref name, ref lit) => {
-            if name == &token::get_name(token::intern(cond_name)) ||
-               name == &token::get_name(token::intern(&debug_name(cond_name)[..])) {
+            if name.to_string() == cond_name ||
+               name.to_string() == &debug_name(cond_name)[..] {
                 match &lit.node {
                     &ast::LitStr(ref lit, _) => {
                         Ok(lit.clone())
