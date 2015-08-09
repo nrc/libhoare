@@ -8,21 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// These tests should all fail to compile, but should not ICE or give
-// unreasonable error messages.
-
-#![feature(plugin)]
-
+#![feature(plugin, custom_attribute)]
 #![plugin(hoare)]
 
-//#[precond=""]
-fn test_bad_str_1() {}
-#[precond="foo"]
-fn test_bad_str_2() {}
-#[precond="5"]
-fn test_bad_str_3() {}
-#[precond="()"]
-fn test_bad_str_4() {}
+// The code below should execute with no output in "--release" mode
+// and panick otherwise.
 
-fn main() {}
+#[debug_precond="false"]
+fn test_precondition_ignored_for_release() {}
 
+fn main() {
+    test_precondition_ignored_for_release();
+}
