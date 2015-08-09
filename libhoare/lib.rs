@@ -283,7 +283,9 @@ fn debug_invariant(cx: &mut ExtCtxt,
 fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: Annotatable) -> Annotatable
     where F: Fn(&mut ExtCtxt) -> Annotatable
 {
-    if cfg!(debug_assertions) {
+    if cx.cfg().iter().any(
+        |item| item.node == ast::MetaWord(token::intern("debug_assertions").as_str()))
+    {
         f(cx)
     } else {
         item
