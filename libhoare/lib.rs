@@ -17,7 +17,7 @@ extern crate syntax;
 
 use syntax::ast;
 use syntax::ast::{Item, MetaItem};
-use syntax::codemap::{self, Span};
+use syntax::codemap::{self, Span, Spanned, dummy_spanned};
 use syntax::ext::base::{ExtCtxt, MultiModifier, Annotatable};
 use syntax::ext::quote::rt::{ExtParseUtils, ToTokens};
 use syntax::ext::build::AstBuilder;
@@ -372,6 +372,12 @@ fn loop_label() -> ast::Ident {
     }
 }
 
+fn spanned_loop_label() -> Spanned<ast::Ident> {
+    unsafe {
+        dummy_spanned(ast::Ident::new(token::intern(&format!("'__hoare_{}", RUN_COUNT))))
+    }
+}
+
 fn make_body(cx: &ExtCtxt,
              mut body: ast::Block,
              sp: Span,
@@ -381,18 +387,17 @@ fn make_body(cx: &ExtCtxt,
     // Fold return expressions into breaks.
     body.stmts = fold_stmts(cx, &body.stmts);
 
-    let loop_label = loop_label();
-
     // Turn the optional returned expression into an assignment
     // into __result and a break.
     body.stmts.extend(terminate_loop(cx, &body.expr, ret).into_iter());
     // FIXME Sometimes (e.g., after a return which was converted to a break) this
     // is not necessary, it will then produce unreachable code warnings. Would
     // be better not to generate this code then.
-    body.stmts.push(cx.stmt_expr(cx.expr(codemap::DUMMY_SP, ast::Expr_::ExprBreak(Some(loop_label)))));
+    body.stmts.push(cx.stmt_expr(cx.expr(codemap::DUMMY_SP,
+                                         ast::Expr_::ExprBreak(Some(spanned_loop_label())))));
     body.expr = None;
 
-    cx.stmt_expr(cx.expr(sp, ast::Expr_::ExprLoop(P(body), Some(loop_label))))
+    cx.stmt_expr(cx.expr(sp, ast::Expr_::ExprLoop(P(body), Some(loop_label()))))
 }
 
 fn terminate_loop(cx: &ExtCtxt,
@@ -448,7 +453,7 @@ struct ReturnFolder<'a, 'b: 'a> {
 impl<'a, 'b> Folder for ReturnFolder<'a, 'b> {
     fn fold_expr(&mut self, e: P<ast::Expr>) -> P<ast::Expr> {
         let result_name = result_name();
-        let loop_label = loop_label();
+        let loop_label = spanned_loop_label();
         match e.node {
             ast::Expr_::ExprRet(Some(ref expr)) => {
                 // We should really fold expr here, but you'd have to be pretty
