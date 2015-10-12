@@ -362,19 +362,19 @@ fn result_expr(cx: &ExtCtxt) -> P<ast::Expr> {
 
 fn result_name() -> ast::Ident {
     unsafe {
-        ast::Ident::new(token::intern(&format!("__result_{}", RUN_COUNT)))
+        ast::Ident::with_empty_ctxt(token::intern(&format!("__result_{}", RUN_COUNT)))
     }
 }
 
 fn loop_label() -> ast::Ident {
     unsafe {
-        ast::Ident::new(token::intern(&format!("'__hoare_{}", RUN_COUNT)))
+        ast::Ident::with_empty_ctxt(token::intern(&format!("'__hoare_{}", RUN_COUNT)))
     }
 }
 
 fn spanned_loop_label() -> Spanned<ast::Ident> {
     unsafe {
-        dummy_spanned(ast::Ident::new(token::intern(&format!("'__hoare_{}", RUN_COUNT))))
+        dummy_spanned(ast::Ident::with_empty_ctxt(token::intern(&format!("'__hoare_{}", RUN_COUNT))))
     }
 }
 
