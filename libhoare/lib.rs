@@ -12,7 +12,7 @@
 
 #![feature(plugin_registrar, quote, rustc_private)]
 
-extern crate rustc;
+extern crate rustc_plugin;
 extern crate syntax;
 
 use syntax::ast;
@@ -25,7 +25,7 @@ use syntax::fold::{Folder, noop_fold_expr, noop_fold_mac};
 use syntax::parse::token;
 use syntax::ptr::P;
 use syntax::util::small_vector::SmallVector;
-use rustc::plugin::Registry;
+use rustc_plugin::Registry;
 
 // Assuming this is going to be Ok because syntax extensions can't be used
 // concurrently. What could go wrong?
@@ -205,9 +205,9 @@ fn map_annotatble(cx: &mut ExtCtxt,
     match item {
         Annotatable::Item(item) => {
             match &item.node {
-                &ast::ItemFn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
+                &ast::ItemKind::Fn(ref decl, unsafety, constness, abi, ref generics, ref body) => {
                     match contract_body(item.ident, decl, body, cx, sp, attr, contract) {
-                        Ok(body) => Annotatable::Item(P(Item { node: ast::ItemFn(decl.clone(),
+                        Ok(body) => Annotatable::Item(P(Item { node: ast::ItemKind::Fn(decl.clone(),
                                                                                  unsafety,
                                                                                  constness,
                                                                                  abi,
@@ -225,10 +225,10 @@ fn map_annotatble(cx: &mut ExtCtxt,
         }
         Annotatable::ImplItem(item) => {
             match item.node {
-                ast::ImplItem_::MethodImplItem(ref sig, ref body) => {
+                ast::ImplItemKind::Method(ref sig, ref body) => {
                     match contract_body(item.ident, &sig.decl, body, cx, sp, attr, contract) {
                         Ok(body) => Annotatable::ImplItem(P(ast::ImplItem {
-                            node: ast::ImplItem_::MethodImplItem(sig.clone(), body),
+                            node: ast::ImplItemKind::Method(sig.clone(), body),
                             .. (*item).clone()
                         })),
                         Err(_) => Annotatable::ImplItem(item.clone()),
@@ -242,10 +242,10 @@ fn map_annotatble(cx: &mut ExtCtxt,
         }
         Annotatable::TraitItem(item) => {
             match item.node {
-                ast::TraitItem_::MethodTraitItem(ref sig, Some(ref body)) => {
+                ast::TraitItemKind::Method(ref sig, Some(ref body)) => {
                     match contract_body(item.ident, &sig.decl, body, cx, sp, attr, contract) {
                         Ok(body) => Annotatable::TraitItem(P(ast::TraitItem {
-                            node: ast::TraitItem_::MethodTraitItem(sig.clone(), Some(body)),
+                            node: ast::TraitItemKind::Method(sig.clone(), Some(body)),
                             .. (*item).clone()
                         })),
                         Err(_) => Annotatable::TraitItem(item.clone()),
@@ -284,7 +284,7 @@ fn if_debug<F>(cx: &mut ExtCtxt, f: F, item: Annotatable) -> Annotatable
     where F: Fn(&mut ExtCtxt) -> Annotatable
 {
     if cx.cfg().iter().any(
-        |item| item.node == ast::MetaWord(token::intern("debug_assertions").as_str()))
+        |item| item.node == ast::MetaItemKind::Word(token::intern("debug_assertions").as_str()))
     {
         f(cx)
     } else {
@@ -305,11 +305,11 @@ fn make_predicate(cx: &ExtCtxt,
     }
 
     match &attr.node {
-        &ast::MetaNameValue(ref name, ref lit) => {
+        &ast::MetaItemKind::NameValue(ref name, ref lit) => {
             if name.to_string() == cond_name ||
                name.to_string() == &debug_name(cond_name)[..] {
                 match &lit.node {
-                    &ast::LitStr(ref lit, _) => {
+                    &ast::LitKind::Str(ref lit, _) => {
                         Ok(lit.clone())
                     }
                     _ => {
@@ -335,7 +335,7 @@ fn assert(cx: &ExtCtxt,
           cond_type: &str,
           fn_name: &token::InternedString,
           pred: P<ast::Expr>,
-          pred_str: &str) -> P<ast::Stmt> {
+          pred_str: &str) -> ast::Stmt {
     let label = format!("{} {} ({})", cond_type, fn_name,
                         pred_str.replace("\"", "\\\""));
     let label = &label;
@@ -343,13 +343,13 @@ fn assert(cx: &ExtCtxt,
 }
 
 fn fn_body(cx: &ExtCtxt,
-           stmts: Vec<P<ast::Stmt>>,
+           stmts: Vec<ast::Stmt>,
            sp: Span) -> P<ast::Block> {
     P(ast::Block {
         stmts: stmts,
         expr: Some(result_expr(cx)),
         id: ast::DUMMY_NODE_ID,
-        rules: ast::DefaultBlock,
+        rules: ast::BlockCheckMode::Default,
         span: sp
     })
 }
@@ -382,7 +382,7 @@ fn make_body(cx: &ExtCtxt,
              mut body: ast::Block,
              sp: Span,
              ret: &ast::FunctionRetTy)
-    -> P<ast::Stmt>
+    -> ast::Stmt
 {
     // Fold return expressions into breaks.
     body.stmts = fold_stmts(cx, &body.stmts);
@@ -394,16 +394,16 @@ fn make_body(cx: &ExtCtxt,
     // is not necessary, it will then produce unreachable code warnings. Would
     // be better not to generate this code then.
     body.stmts.push(cx.stmt_expr(cx.expr(codemap::DUMMY_SP,
-                                         ast::Expr_::ExprBreak(Some(spanned_loop_label())))));
+                                         ast::ExprKind::Break(Some(spanned_loop_label())))));
     body.expr = None;
 
-    cx.stmt_expr(cx.expr(sp, ast::Expr_::ExprLoop(P(body), Some(loop_label()))))
+    cx.stmt_expr(cx.expr(sp, ast::ExprKind::Loop(P(body), Some(loop_label()))))
 }
 
 fn terminate_loop(cx: &ExtCtxt,
                   expr: &Option<P<ast::Expr>>,
                   ret: &ast::FunctionRetTy)
-    -> Option<P<ast::Stmt>>
+    -> Option<ast::Stmt>
 {
     let result_name = result_name();
     match expr {
@@ -418,10 +418,10 @@ fn terminate_loop(cx: &ExtCtxt,
 
 fn is_void(ret: &ast::FunctionRetTy) -> bool {
     match ret {
-        &ast::FunctionRetTy::NoReturn(_) => true,
-        &ast::FunctionRetTy::DefaultReturn(_) => true,
-        &ast::FunctionRetTy::Return(ref ty) => {
-            if let ast::Ty_::TyTup(ref tys) = ty.node {
+        &ast::FunctionRetTy::None(_) => true,
+        &ast::FunctionRetTy::Default(_) => true,
+        &ast::FunctionRetTy::Ty(ref ty) => {
+            if let ast::TyKind::Tup(ref tys) = ty.node {
                 tys.len() == 0
             } else {
                 false
@@ -432,7 +432,7 @@ fn is_void(ret: &ast::FunctionRetTy) -> bool {
 
 
 // These folding functions walk the AST replacing any returns with breaks.
-fn fold_stmts(cx: &ExtCtxt, stmts: &[P<ast::Stmt>]) -> Vec<P<ast::Stmt>> {
+fn fold_stmts(cx: &ExtCtxt, stmts: &[ast::Stmt]) -> Vec<ast::Stmt> {
     let mut result = Vec::new();
     for s in stmts {
         result.extend(fold_stmt(cx, s.clone()).into_iter());
@@ -440,7 +440,7 @@ fn fold_stmts(cx: &ExtCtxt, stmts: &[P<ast::Stmt>]) -> Vec<P<ast::Stmt>> {
     result
 }
 
-fn fold_stmt(cx: &ExtCtxt, stmt: P<ast::Stmt>) -> SmallVector<P<ast::Stmt>> {
+fn fold_stmt(cx: &ExtCtxt, stmt: ast::Stmt) -> SmallVector<ast::Stmt> {
     let mut ret = ReturnFolder { cx: cx };
 
     ret.fold_stmt(stmt)
@@ -455,7 +455,7 @@ impl<'a, 'b> Folder for ReturnFolder<'a, 'b> {
         let result_name = result_name();
         let loop_label = spanned_loop_label();
         match e.node {
-            ast::Expr_::ExprRet(Some(ref expr)) => {
+            ast::ExprKind::Ret(Some(ref expr)) => {
                 // We should really fold expr here, but you'd have to be pretty
                 // pathalogical to embed a return inside a return.
                 let expr = expr.clone();
@@ -464,17 +464,17 @@ impl<'a, 'b> Folder for ReturnFolder<'a, 'b> {
                 let stmts = vec![quote_stmt!(self.cx, $result_name = Some($expr);).unwrap(),
                                  self.cx.stmt_expr(
                                     self.cx.expr(codemap::DUMMY_SP,
-                                        ast::Expr_::ExprBreak(Some(loop_label))))];
+                                        ast::ExprKind::Break(Some(loop_label))))];
                 let expr = self.cx.expr_block(self.cx.block(stmts[0].span, stmts, None));
                 return expr;
             }
-            ast::Expr_::ExprRet(None) => {
+            ast::ExprKind::Ret(None) => {
                 // FIXME(#26994) broken quasi-quoting.
                 // return quote_expr!(self.cx, { $result_name = Some(()); break $loop_label; });
                 let stmts = vec![quote_stmt!(self.cx, $result_name = Some(());).unwrap(),
                                  self.cx.stmt_expr(
                                     self.cx.expr(codemap::DUMMY_SP,
-                                        ast::Expr_::ExprBreak(Some(loop_label))))];
+                                        ast::ExprKind::Break(Some(loop_label))))];
                 let expr = self.cx.expr_block(self.cx.block(stmts[0].span, stmts, None));
                 return expr;
             }
