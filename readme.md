@@ -21,7 +21,7 @@ which was named after Tony).
 
 You can use libhoare with Cargo by adding 
 
-```
+```toml
 [dependencies.hoare]
 git = "https://github.com/nick29581/libhoare.git"
 ```
@@ -36,7 +36,7 @@ building).
 Then (whether or not you used Cargo), in your crate you will need the following
 boilerplate:
 
-```
+```rust
 #![feature(plugin, custom_attribute)]
 
 #![plugin(hoare)]
@@ -47,7 +47,7 @@ Then you can use the macros as shown below.
 
 ## Examples:
 
-```
+```rust
 #[precond="x > 0"]
 #[postcond="result > 1"]
 fn foo(x: int) -> int {
